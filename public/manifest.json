@@ -7,8 +7,17 @@
   "background_color": "#F1ECE2",
   "theme_color": "#5B4B8A",
   "orientation": "portrait",
-  "icons": [
+"icons": [
     { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
     { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ],
+  "shortcuts": [
+    {
+      "name": "Calendrier",
+      "short_name": "Calendrier",
+      "description": "Ouvrir directement le calendrier",
+      "url": "/?tab=calendrier",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+    }
   ]
 }
