@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import {
   Home, CheckSquare, ShoppingCart, UtensilsCrossed, CalendarClock, CalendarDays, Briefcase,
-  Plus, Trash2, Check, X, Loader2, Shuffle, ChevronLeft, ChevronRight, Bell, BellOff, User, Palette,
+  Plus, Trash2, Check, X, Loader2, Shuffle, ChevronLeft, ChevronRight, Bell, BellOff, User, Palette, Users,
 } from "lucide-react";
 import { useCollection } from "./hooks/useCollection";
 import { enableNotifications, disableNotifications, getMyDevice, setCategoryPref, NOTIF_CATEGORIES } from "./notifications";
@@ -12,21 +12,76 @@ const TABS = [
   { id: "taches", label: "Tâches", icon: CheckSquare },
   { id: "calendrier", label: "Calendrier", icon: CalendarDays },
   { id: "repas", label: "Repas", icon: UtensilsCrossed },
-  { id: "activites", label: "Activités", icon: CalendarClock },
   { id: "valise", label: "Valises", icon: Briefcase },
   { id: "courses", label: "Courses", icon: ShoppingCart },
   { id: "profil", label: "Profil", icon: User },
 ];
 
+const QUICK_ADD_CHOICES = [
+  { id: "travail", label: "Travail", icon: Briefcase },
+  { id: "amis", label: "Amis", icon: Users },
+  { id: "activite", label: "Activités", icon: CalendarClock },
+  { id: "tache", label: "Tâche", icon: CheckSquare },
+];
+
 const ASSIGNEES = ["Jerem", "Jennifer", "Les deux"];
 const WORK_ICON = { Jennifer: "🩺", Jerem: "💳" };
 const FRIEND_MOMENTS = ["Journée", "Midi", "Goûter", "Soir"];
+
+// Couleurs fixes par catégorie pour la vue Calendrier (indépendantes de la couleur
+// d'accent personnalisable, pour que la légende reste lisible quel que soit le thème).
+const CAT_COLORS = {
+  tache: "#6B7280",
+  travail: "#2F6B4F",
+  repos: "#B0455A",
+  amis: "#C1683C",
+  activite: "#5B4B8A",
+  repas: "#3B6B8C",
+};
+
+function monthGridDates(monthDate) {
+  const year = monthDate.getFullYear();
+  const month = monthDate.getMonth();
+  const firstOfMonth = new Date(year, month, 1);
+  const firstWeekday = (firstOfMonth.getDay() + 6) % 7; // 0 = lundi
+  const start = new Date(firstOfMonth);
+  start.setDate(1 - firstWeekday);
+  const days = [];
+  for (let i = 0; i < 42; i++) {
+    const d = new Date(start);
+    d.setDate(start.getDate() + i);
+    days.push(d);
+  }
+  return days;
+}
+
+// Rassemble tous les éléments (tâches, travail, amis, repas, activités) d'un jour
+// donné, avec une couleur par catégorie, pour l'affichage compact en grille.
+function buildDayItems(iso, dayName, tasks, repas, activites) {
+  const items = [];
+  tasks
+    .filter((t) => t.date === iso)
+    .forEach((t) => {
+      if (t.isWork) {
+        items.push({ label: `${t.icon} ${t.isRest ? "Repos" : `${t.time}–${t.endTime}`}`, color: t.isRest ? CAT_COLORS.repos : CAT_COLORS.travail });
+      } else if (t.isFriend) {
+        items.push({ label: `${t.friendName} (${t.moment})`, color: CAT_COLORS.amis });
+      } else {
+        items.push({ label: t.text, color: CAT_COLORS.tache });
+      }
+    });
+  repas.filter((r) => r.date === iso).forEach((r) => items.push({ label: r.meal, color: CAT_COLORS.repas }));
+  activites
+    .filter((a) => (a.recurring && a.day === dayName) || (!a.recurring && a.date === iso))
+    .forEach((a) => items.push({ label: `${a.icon} ${a.activity}`, color: CAT_COLORS.activite }));
+  return items;
+}
 const KIDS = [
   { name: "Noé", color: "#5B4B8A" },
   { name: "Thaïs", color: "#C1683C" },
   { name: "Alba", color: "#3E6E63" },
 ];
-const PEOPLE_COLORS = { Jerem: "#3E6E63", Jennifer: "#C1683C", "Les deux": "#5B4B8A", Tous: "#8A8071" };
+const PEOPLE_COLORS = { Jerem: "#3E6E63", Jennifer: "#C1683C", "Les deux": "#5B4B8A", Tous: "#8A8071", Parents: "var(--accent)" };
 const VALISE_OWNERS = ["Tous", "Jerem", "Jennifer", "Noé", "Thaïs", "Alba"];
 const MEAL_TASKS = [
   { id: "table", label: "Mettre la table" },
@@ -122,6 +177,14 @@ export default function App() {
     toastTimer.current = setTimeout(() => setToast(null), 1600);
   };
 
+  const [fabOpen, setFabOpen] = useState(false);
+  const [taskRequest, setTaskRequest] = useState({ category: "travail", token: 0 });
+  const openTasksWith = (categoryId) => {
+    setTaskRequest({ category: categoryId, token: Date.now() });
+    setActive("taches");
+    setFabOpen(false);
+  };
+
   const [accentColor, setAccentColor] = useState(() => localStorage.getItem("carnet-accent-color") || "#5B4B8A");
   const updateAccent = (color) => {
     setAccentColor(color);
@@ -139,11 +202,6 @@ export default function App() {
 
   return (
     <div style={{ "--accent": accentColor, fontFamily: "'Public Sans', sans-serif", background: "#F1ECE2", minHeight: "100vh", color: "#262138", display: "flex", flexDirection: "column" }}>
-      <header style={{ padding: "28px 20px 20px", background: "linear-gradient(180deg, #FBF8F3 0%, #F1ECE2 100%)", borderBottom: "1px solid #E3DBCB" }}>
-        <div style={{ fontSize: 12, letterSpacing: "0.12em", textTransform: "uppercase", color: "#8A8071", marginBottom: 6 }}>{todayFR()}</div>
-        <h1 className="display" style={{ fontSize: 28, fontWeight: 600, margin: 0, fontStyle: "italic", color: "#262138" }}>Le carnet du foyer</h1>
-      </header>
-
       <main style={{ flex: 1, overflowY: "auto", padding: "20px 16px 110px", maxWidth: 560, margin: "0 auto", width: "100%" }}>
         {!ready ? (
           <div style={{ display: "flex", justifyContent: "center", padding: 60, color: "#8A8071" }}>
@@ -153,7 +211,7 @@ export default function App() {
         ) : active === "jour" ? (
           <Overview tasks={tasksC.items} shopping={shoppingC.items} repas={repasC.items} activites={activitesC.items} goTo={setActive} notify={notify} />
         ) : active === "taches" ? (
-          <Tasks tasks={tasksC.items} col={tasksC} notify={notify} friends={friendsC.items} friendsCol={friendsC} />
+          <Tasks tasks={tasksC.items} col={tasksC} notify={notify} friends={friendsC.items} friendsCol={friendsC} activites={activitesC.items} activitesCol={activitesC} initialCategory={taskRequest.category} requestToken={taskRequest.token} />
         ) : active === "calendrier" ? (
           <Calendrier tasks={tasksC.items} repas={repasC.items} activites={activitesC.items} />
         ) : active === "repas" ? (
@@ -175,9 +233,84 @@ export default function App() {
         </div>
       )}
 
+      {fabOpen && (
+        <div
+          style={{ position: "fixed", inset: 0, zIndex: 29, background: "rgba(38,33,56,0.25)" }}
+          onClick={() => setFabOpen(false)}
+        />
+      )}
+
+      {fabOpen && (
+        <div
+          style={{
+            position: "fixed",
+            bottom: 88,
+            left: "50%",
+            transform: "translateX(-50%)",
+            display: "flex",
+            gap: 10,
+            zIndex: 30,
+            maxWidth: 560,
+          }}
+        >
+          {QUICK_ADD_CHOICES.map((c) => {
+            const Icon = c.icon;
+            return (
+              <button
+                key={c.id}
+                onClick={() => openTasksWith(c.id)}
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  gap: 6,
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                }}
+              >
+                <span style={{ width: 46, height: 46, borderRadius: "50%", background: "#FBF8F3", border: "1px solid #E3DBCB", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 4px 10px rgba(0,0,0,0.18)" }}>
+                  <Icon size={20} color="var(--accent)" />
+                </span>
+                <span style={{ fontSize: 11, fontWeight: 600, color: "#5C5346", background: "#FBF8F3", padding: "2px 8px", borderRadius: 8, whiteSpace: "nowrap" }}>{c.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       <nav style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: "#FBF8F3", borderTop: "1px solid #E3DBCB", maxWidth: 560, margin: "0 auto" }}>
         <div className="navscroll" style={{ display: "flex", overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
           {TABS.map((tab) => {
+            if (tab.id === "taches") {
+              const isActive = active === "taches";
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setFabOpen((o) => !o)}
+                  aria-label="Ajouter"
+                  style={{ flex: "0 0 auto", minWidth: 66, display: "flex", flexDirection: "column", alignItems: "center", gap: 4, padding: "10px 8px 12px", background: "none", border: "none", cursor: "pointer" }}
+                >
+                  <span
+                    style={{
+                      width: 34,
+                      height: 34,
+                      borderRadius: "50%",
+                      background: "var(--accent)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      boxShadow: fabOpen ? "0 1px 4px rgba(0,0,0,0.2)" : "0 2px 6px rgba(0,0,0,0.2)",
+                      transform: fabOpen ? "rotate(45deg)" : "rotate(0deg)",
+                      transition: "transform 0.2s ease",
+                    }}
+                  >
+                    <Plus size={18} color="#FBF8F3" strokeWidth={2.6} />
+                  </span>
+                  <span style={{ fontSize: 10, fontWeight: isActive ? 600 : 500, color: isActive ? "var(--accent)" : "#9C9384" }}>Tâches</span>
+                </button>
+              );
+            }
             const Icon = tab.icon;
             const isActive = tab.id === active;
             return (
@@ -225,10 +358,13 @@ function DeleteButton({ onDelete, label = "l'élément" }) {
   );
 }
 
-function StatCard({ label, value, onClick }) {
+function StatCard({ label, value, onClick, icon: Icon }) {
   return (
     <button onClick={onClick} style={{ background: "#FBF8F3", border: "1px solid #E3DBCB", borderRadius: 14, padding: 16, textAlign: "left", cursor: "pointer" }}>
-      <div style={{ fontSize: 12, color: "#8A8071", marginBottom: 6 }}>{label}</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#8A8071", marginBottom: 6 }}>
+        {Icon && <Icon size={14} />}
+        {label}
+      </div>
       <div className="mono" style={{ fontSize: 26, fontWeight: 600, color: "var(--accent)" }}>{value}</div>
     </button>
   );
@@ -421,6 +557,104 @@ function Profil({ accentColor, updateAccent }) {
   );
 }
 
+function weatherIcon(code) {
+  if (code === 0) return "☀️";
+  if ([1, 2, 3].includes(code)) return "⛅";
+  if ([45, 48].includes(code)) return "🌫️";
+  if ([51, 53, 55, 56, 57].includes(code)) return "🌦️";
+  if ([61, 63, 65, 66, 67, 80, 81, 82].includes(code)) return "🌧️";
+  if ([71, 73, 75, 77, 85, 86].includes(code)) return "🌨️";
+  if ([95, 96, 99].includes(code)) return "⛈️";
+  return "🌡️";
+}
+
+function Meteo() {
+  const [status, setStatus] = useState("loading"); // loading | ready | denied | error
+  const [data, setData] = useState(null);
+
+  const load = () => {
+    setStatus("loading");
+    if (!navigator.geolocation) {
+      setStatus("error");
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        try {
+          const { latitude, longitude } = pos.coords;
+          const url = `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,weather_code,wind_speed_10m&hourly=temperature_2m,weather_code&timezone=auto&forecast_days=2`;
+          const res = await fetch(url);
+          const json = await res.json();
+          setData(json);
+          setStatus("ready");
+        } catch {
+          setStatus("error");
+        }
+      },
+      () => setStatus("denied"),
+      { timeout: 10000 }
+    );
+  };
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  if (status === "loading") {
+    return (
+      <Card>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, color: "#8A8071", fontSize: 13 }}>
+          <Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} /> Chargement de la météo…
+        </div>
+      </Card>
+    );
+  }
+
+  if (status === "denied" || status === "error") {
+    return (
+      <Card>
+        <div style={{ fontSize: 13, color: "#8A8071", marginBottom: 8 }}>
+          {status === "denied" ? "Localisation refusée — impossible d'afficher la météo." : "Météo indisponible pour le moment."}
+        </div>
+        <button onClick={load} style={ghostBtn}>Réessayer</button>
+      </Card>
+    );
+  }
+
+  const current = data.current;
+  const hourly = data.hourly;
+  const now = new Date();
+  let startIndex = hourly.time.findIndex((t) => new Date(t) >= now);
+  if (startIndex < 0) startIndex = 0;
+  const upcoming = hourly.time.slice(startIndex, startIndex + 12).map((t, i) => ({
+    time: t,
+    temp: hourly.temperature_2m[startIndex + i],
+    code: hourly.weather_code[startIndex + i],
+  }));
+
+  return (
+    <Card>
+      <SectionLabel>Météo</SectionLabel>
+      <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 14 }}>
+        <span style={{ fontSize: 40 }}>{weatherIcon(current.weather_code)}</span>
+        <div>
+          <div className="mono" style={{ fontSize: 28, fontWeight: 600, color: "#262138" }}>{Math.round(current.temperature_2m)}°C</div>
+          <div style={{ fontSize: 12, color: "#8A8071" }}>Vent {Math.round(current.wind_speed_10m)} km/h</div>
+        </div>
+      </div>
+      <div style={{ display: "flex", overflowX: "auto", gap: 16, paddingBottom: 2, WebkitOverflowScrolling: "touch" }}>
+        {upcoming.map((h, i) => (
+          <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, flexShrink: 0, minWidth: 40 }}>
+            <span style={{ fontSize: 11, color: "#8A8071" }}>{new Date(h.time).getHours()}h</span>
+            <span style={{ fontSize: 20 }}>{weatherIcon(h.code)}</span>
+            <span className="mono" style={{ fontSize: 12, fontWeight: 600, color: "#5C5346" }}>{Math.round(h.temp)}°</span>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
 function Overview({ tasks, shopping, repas, activites, goTo }) {
   const iso = todayISO();
   const dayName = todayDayName();
@@ -432,8 +666,22 @@ function Overview({ tasks, shopping, repas, activites, goTo }) {
   const pendingShopping = shopping.filter((s) => !s.done);
   const undatedPending = pendingTasks.filter((t) => !t.date);
 
+  const tomorrowDate = new Date();
+  tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+  const tomorrowIso = toISO(tomorrowDate);
+  const tomorrowDayName = (() => {
+    const s = tomorrowDate.toLocaleDateString("fr-FR", { weekday: "long" });
+    return s.charAt(0).toUpperCase() + s.slice(1);
+  })();
+  const tomorrowTasks = tasks.filter((t) => t.date === tomorrowIso);
+  const tomorrowRepas = repas.filter((r) => r.date === tomorrowIso);
+  const tomorrowActs = activites.filter((a) => (a.recurring && a.day === tomorrowDayName) || (!a.recurring && a.date === tomorrowIso)).sort((a, b) => a.time.localeCompare(b.time));
+  const hasTomorrowInfo = tomorrowTasks.length + tomorrowRepas.length + tomorrowActs.length > 0;
+
   return (
     <div>
+      <Meteo />
+
       <Card style={{ border: "1.5px solid var(--accent)" }}>
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 14 }}>
           <span className="display" style={{ fontStyle: "italic", fontSize: 22, color: "#262138" }}>{dayName}</span>
@@ -488,19 +736,66 @@ function Overview({ tasks, shopping, repas, activites, goTo }) {
         )}
       </Card>
 
+      {hasTomorrowInfo && (
+        <Card>
+          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 14 }}>
+            <span className="display" style={{ fontStyle: "italic", fontSize: 18, color: "#262138" }}>Prévu demain — {tomorrowDayName}</span>
+            <span style={{ fontSize: 13, color: "#8A8071" }}>{tomorrowDate.toLocaleDateString("fr-FR", { day: "numeric", month: "long" })}</span>
+          </div>
+          {tomorrowActs.length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <SectionLabel>Activités</SectionLabel>
+              {tomorrowActs.map((a) => (
+                <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "5px 0" }}>
+                  <span style={{ fontSize: 15 }}>{a.icon}</span>
+                  <span className="mono" style={{ fontSize: 12, color: "#8A8071", width: 76 }}>{a.time}–{a.endTime || "?"}</span>
+                  <span style={{ width: 8, height: 8, borderRadius: 4, background: colorFor(a.child) }} />
+                  <span style={{ fontSize: 14 }}>{a.activity} — {a.child}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {tomorrowRepas.length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <SectionLabel>Repas</SectionLabel>
+              {tomorrowRepas.map((r) => (
+                <div key={r.id} style={{ fontSize: 14, padding: "5px 0", color: "#5C5346" }}><strong>{r.meal}</strong> — table: {r.table}, débarrasse: {r.debarrasser}, yaourts: {r.yaourts}</div>
+              ))}
+            </div>
+          )}
+          {tomorrowTasks.length > 0 && (
+            <div>
+              <SectionLabel>Tâches</SectionLabel>
+              {tomorrowTasks.map((t) => (
+                t.isWork ? (
+                  <div key={t.id} style={{ fontSize: 14, padding: "5px 0", display: "flex", alignItems: "center", gap: 8 }}>
+                    <span>{t.icon}</span> <strong>{t.assignee}</strong>
+                    <span style={{ color: "#8A8071", fontSize: 12 }}>{t.isRest ? "— Repos" : `— Travail ${t.time}–${t.endTime}`}</span>
+                  </div>
+                ) : t.isFriend ? (
+                  <div key={t.id} style={{ fontSize: 14, padding: "5px 0", display: "flex", alignItems: "center", gap: 8 }}>
+                    <span>👥</span> <strong>{t.friendName}</strong>
+                    <span style={{ color: "#8A8071", fontSize: 12 }}>— {t.moment}{t.arrivalTime && ` · arrivée ${t.arrivalTime}`}</span>
+                  </div>
+                ) : (
+                  <div key={t.id} style={{ fontSize: 14, padding: "5px 0", textDecoration: t.done ? "line-through" : "none", color: t.done ? "#9C9384" : "#5C5346" }}>✓ {t.text} <span style={{ color: "#8A8071", fontSize: 12 }}>({t.assignee})</span></div>
+                )
+              ))}
+            </div>
+          )}
+        </Card>
+      )}
+
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 4 }}>
-        <StatCard label="Tâches en attente" value={pendingTasks.length} onClick={() => goTo("taches")} />
-        <StatCard label="À acheter" value={pendingShopping.length} onClick={() => goTo("courses")} />
+        <StatCard label="Tâches en cours" value={pendingTasks.length} onClick={() => goTo("taches")} icon={CheckSquare} />
+        <StatCard label="Liste de courses" value={pendingShopping.length} onClick={() => goTo("courses")} icon={ShoppingCart} />
       </div>
 
-      {undatedPending.length > 0 || pendingShopping.length > 0 ? (
+      {undatedPending.length > 0 ? (
         <Card>
           <SectionLabel>Sans date précise</SectionLabel>
           {undatedPending.slice(0, 3).map((t) => (
             <div key={t.id} style={{ fontSize: 15, padding: "6px 0", borderBottom: "1px solid #EFE9DD" }}>✓ {t.text} <span style={{ color: "#8A8071", fontSize: 13 }}>({t.assignee})</span></div>
-          ))}
-          {pendingShopping.slice(0, 3).map((s) => (
-            <div key={s.id} style={{ fontSize: 15, padding: "6px 0", borderBottom: "1px solid #EFE9DD" }}>🛒 {s.text}</div>
           ))}
         </Card>
       ) : (
@@ -510,8 +805,15 @@ function Overview({ tasks, shopping, repas, activites, goTo }) {
   );
 }
 
-function Tasks({ tasks, col, notify, friends, friendsCol }) {
-  const [category, setCategory] = useState("travail"); // "travail" | "amis" | "tache"
+function Tasks({ tasks, col, notify, friends, friendsCol, activites, activitesCol, initialCategory, requestToken }) {
+  const [category, setCategory] = useState(initialCategory || "travail"); // "travail" | "amis" | "activite" | "tache"
+
+  // Le "+" flottant peut être cliqué alors qu'on est déjà sur cette page : useState
+  // n'écoute pas les changements de prop après le premier rendu, donc on force la
+  // synchronisation à chaque nouvelle demande (via un jeton unique à chaque clic).
+  useEffect(() => {
+    if (initialCategory) setCategory(initialCategory);
+  }, [requestToken]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // -- Autre tâche --
   const [text, setText] = useState("");
@@ -533,6 +835,16 @@ function Tasks({ tasks, col, notify, friends, friendsCol }) {
   const [friendMoment, setFriendMoment] = useState(FRIEND_MOMENTS[0]);
   const [friendDate, setFriendDate] = useState("");
   const [friendArrival, setFriendArrival] = useState("");
+
+  // -- Activités --
+  const [activityName, setActivityName] = useState("");
+  const [activityIcon, setActivityIcon] = useState(ACTIVITY_ICONS[0].emoji);
+  const [activityChild, setActivityChild] = useState(KIDS[0].name);
+  const [activityRecurring, setActivityRecurring] = useState(true);
+  const [activityDay, setActivityDay] = useState(DAYS[0]);
+  const [activityDate, setActivityDate] = useState(todayISO());
+  const [activityTime, setActivityTime] = useState("17:00");
+  const [activityEndTime, setActivityEndTime] = useState("18:00");
 
   const add = async () => {
     if (!text.trim()) return;
@@ -601,12 +913,25 @@ function Tasks({ tasks, col, notify, friends, friendsCol }) {
     setFriendName(""); setFriendArrival("");
   };
 
+  const addActivity = async () => {
+    if (!activityName.trim()) return;
+    const base = { activity: activityName.trim(), icon: activityIcon, child: activityChild, time: activityTime, endTime: activityEndTime, recurring: activityRecurring };
+    const record = activityRecurring ? { ...base, day: activityDay, date: null } : { ...base, date: activityDate, day: dayNameFromDate(activityDate) };
+    await activitesCol.add(record);
+    notify();
+    const when = activityRecurring ? `${activityDay} ${activityTime}` : `${new Date(activityDate + "T00:00:00").toLocaleDateString("fr-FR")} ${activityTime}`;
+    sendPush("Nouvelle activité", `${activityName.trim()} — ${activityChild} (${when})`, "activites");
+    setActivityName("");
+  };
+  const removeActivity = async (id) => { await activitesCol.remove(id); notify("Supprimé"); };
+
   const toggle = async (id, done) => { await col.update(id, { done: !done }); notify(); };
   const remove = async (id) => { await col.remove(id); notify("Supprimé"); };
 
   const regularTasks = [...tasks.filter((t) => !t.isWork && !t.isFriend)].sort((a, b) => a.done - b.done);
   const workShifts = [...tasks.filter((t) => t.isWork)].sort((a, b) => (a.date || "").localeCompare(b.date || ""));
   const friendVisits = [...tasks.filter((t) => t.isFriend)].sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+  const sortedActivites = [...activites].sort((a, b) => (a.recurring ? DAYS.indexOf(a.day) : 99) - (b.recurring ? DAYS.indexOf(b.day) : 99));
 
   return (
     <div>
@@ -614,14 +939,29 @@ function Tasks({ tasks, col, notify, friends, friendsCol }) {
         {[
           { id: "travail", label: "Travail" },
           { id: "amis", label: "Amis" },
-          { id: "tache", label: "Autre tâche" },
+          { id: "activite", label: "Activités" },
+          { id: "tache", label: "+", isIcon: true },
         ].map((c) => (
           <button
             key={c.id}
             onClick={() => setCategory(c.id)}
-            style={{ flex: 1, padding: "10px 2px", borderRadius: 10, border: "1px solid #E3DBCB", fontWeight: 600, fontSize: 12, cursor: "pointer", background: category === c.id ? "var(--accent)" : "#FBF8F3", color: category === c.id ? "#FBF8F3" : "var(--accent)" }}
+            aria-label={c.isIcon ? "Autre tâche" : c.label}
+            style={{
+              flex: c.isIcon ? "0 0 44px" : 1,
+              padding: "10px 2px",
+              borderRadius: 10,
+              border: "1px solid #E3DBCB",
+              fontWeight: 600,
+              fontSize: c.isIcon ? 16 : 12,
+              cursor: "pointer",
+              background: category === c.id ? "var(--accent)" : "#FBF8F3",
+              color: category === c.id ? "#FBF8F3" : "var(--accent)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
           >
-            {c.label}
+            {c.isIcon ? <Plus size={18} /> : c.label}
           </button>
         ))}
       </div>
@@ -738,34 +1078,24 @@ function Tasks({ tasks, col, notify, friends, friendsCol }) {
       {category === "amis" && (
         <Card>
           <SectionLabel>Nouvelle visite entre amis</SectionLabel>
+          {friends.length > 0 && (
+            <select
+              value=""
+              onChange={(e) => e.target.value && setFriendName(e.target.value)}
+              style={{ width: "100%", padding: "10px", borderRadius: 10, border: "1px solid #E3DBCB", fontSize: 13, marginBottom: 10, color: "#5C5346" }}
+            >
+              <option value="">Choisir un ami déjà enregistré…</option>
+              {friends.map((f) => (
+                <option key={f.id} value={f.name}>{f.name}</option>
+              ))}
+            </select>
+          )}
           <input
             value={friendName}
             onChange={(e) => setFriendName(e.target.value)}
             placeholder="Nom de l'ami(e)…"
-            style={{ width: "100%", padding: "12px 14px", borderRadius: 10, border: friendName.trim() ? "1px solid #E3DBCB" : "1.5px solid #B0455A", fontSize: 15, marginBottom: friends.length > 0 ? 8 : 10 }}
+            style={{ width: "100%", padding: "12px 14px", borderRadius: 10, border: friendName.trim() ? "1px solid #E3DBCB" : "1.5px solid #B0455A", fontSize: 15, marginBottom: 10 }}
           />
-          {friends.length > 0 && (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
-              {friends.map((f) => (
-                <button
-                  key={f.id}
-                  onClick={() => setFriendName(f.name)}
-                  style={{
-                    padding: "5px 10px",
-                    borderRadius: 20,
-                    border: friendName === f.name ? "1.5px solid var(--accent)" : "1px solid #E3DBCB",
-                    background: friendName === f.name ? "color-mix(in srgb, var(--accent) 15%, white)" : "#FBF8F3",
-                    color: friendName === f.name ? "var(--accent)" : "#5C5346",
-                    fontSize: 12,
-                    fontWeight: 600,
-                    cursor: "pointer",
-                  }}
-                >
-                  {f.name}
-                </button>
-              ))}
-            </div>
-          )}
           <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
             <select value={friendMoment} onChange={(e) => setFriendMoment(e.target.value)} style={{ flex: 1, padding: "10px", borderRadius: 10, border: "1px solid #E3DBCB", fontSize: 13 }}>
               {FRIEND_MOMENTS.map((m) => <option key={m} value={m}>{m}</option>)}
@@ -790,6 +1120,54 @@ function Tasks({ tasks, col, notify, friends, friendsCol }) {
             style={{ width: "100%", background: friendValid ? "var(--accent)" : "#C9BFA9", color: "#FBF8F3", border: "none", borderRadius: 10, padding: "10px 0", fontWeight: 600, cursor: friendValid ? "pointer" : "not-allowed" }}
           >
             Ajouter
+          </button>
+        </Card>
+      )}
+
+      {category === "activite" && (
+        <Card>
+          <SectionLabel>Nouvelle activité</SectionLabel>
+          <input
+            value={activityName}
+            onChange={(e) => setActivityName(e.target.value)}
+            placeholder="Ex. Danse, Foot…"
+            style={{ width: "100%", padding: "12px 14px", borderRadius: 10, border: "1px solid #E3DBCB", fontSize: 15, marginBottom: 10 }}
+          />
+          <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+            <select value={activityIcon} onChange={(e) => setActivityIcon(e.target.value)} style={{ width: 74, padding: "10px", borderRadius: 10, border: "1px solid #E3DBCB", fontSize: 15 }}>
+              {ACTIVITY_ICONS.map((i) => <option key={i.emoji} value={i.emoji}>{i.emoji} {i.label}</option>)}
+            </select>
+            <select value={activityChild} onChange={(e) => setActivityChild(e.target.value)} style={{ flex: 1, padding: "10px", borderRadius: 10, border: "1px solid #E3DBCB", fontSize: 13 }}>
+              {KIDS.map((k) => <option key={k.name} value={k.name}>{k.name}</option>)}
+            </select>
+          </div>
+
+          <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, fontSize: 13, color: "#5C5346", cursor: "pointer" }}>
+            <input type="checkbox" checked={activityRecurring} onChange={(e) => setActivityRecurring(e.target.checked)} style={{ width: 16, height: 16, accentColor: "var(--accent)" }} />
+            Se répète chaque semaine
+          </label>
+
+          {activityRecurring ? (
+            <select value={activityDay} onChange={(e) => setActivityDay(e.target.value)} style={{ width: "100%", padding: "10px", borderRadius: 10, border: "1px solid #E3DBCB", fontSize: 13, marginBottom: 12 }}>
+              {DAYS.map((d) => <option key={d} value={d}>{d}</option>)}
+            </select>
+          ) : (
+            <input
+              type="date"
+              value={activityDate}
+              onChange={(e) => setActivityDate(e.target.value)}
+              style={{ width: "100%", padding: "10px", borderRadius: 10, border: "1px solid #E3DBCB", fontSize: 13, marginBottom: 12 }}
+            />
+          )}
+
+          <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12 }}>
+            <span style={{ fontSize: 12, color: "#8A8071" }}>De</span>
+            <input type="time" value={activityTime} onChange={(e) => setActivityTime(e.target.value)} style={{ flex: 1, padding: "10px", borderRadius: 10, border: "1px solid #E3DBCB", fontSize: 13 }} />
+            <span style={{ fontSize: 12, color: "#8A8071" }}>à</span>
+            <input type="time" value={activityEndTime} onChange={(e) => setActivityEndTime(e.target.value)} style={{ flex: 1, padding: "10px", borderRadius: 10, border: "1px solid #E3DBCB", fontSize: 13 }} />
+          </div>
+          <button onClick={addActivity} style={{ width: "100%", background: "var(--accent)", color: "#FBF8F3", border: "none", borderRadius: 10, padding: "10px 0", fontWeight: 600, cursor: "pointer" }}>
+            Ajouter au planning
           </button>
         </Card>
       )}
@@ -830,6 +1208,24 @@ function Tasks({ tasks, col, notify, friends, friendsCol }) {
         </Card>
       )}
 
+      {sortedActivites.length > 0 && (
+        <Card>
+          <SectionLabel>Activités planifiées</SectionLabel>
+          {sortedActivites.map((a) => (
+            <div key={a.id} className="row-enter" style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: "1px solid #EFE9DD" }}>
+              <span style={{ fontSize: 18 }}>{a.icon}</span>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 15 }}>{a.activity} — {a.child}</div>
+                <div className="mono" style={{ fontSize: 12, color: "#8A8071" }}>
+                  {a.recurring ? a.day : new Date(a.date + "T00:00:00").toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" })} · {a.time}–{a.endTime}
+                </div>
+              </div>
+              <DeleteButton onDelete={() => removeActivity(a.id)} label="cette activité" />
+            </div>
+          ))}
+        </Card>
+      )}
+
       <SectionLabel>Tâches</SectionLabel>
       {regularTasks.length === 0 ? <EmptyState text="Aucune tâche pour l'instant." /> : regularTasks.map((t) => (
         <div key={t.id} className="row-enter" style={rowStyle}>
@@ -844,6 +1240,7 @@ function Tasks({ tasks, col, notify, friends, friendsCol }) {
     </div>
   );
 }
+
 function Shopping({ shopping, col, notify }) {
   const [text, setText] = useState("");
   const add = async () => { if (!text.trim()) return; await col.add({ text: text.trim(), done: false }); notify(); sendPush("Ajouté aux courses", text.trim(), "courses"); setText(""); };
@@ -960,6 +1357,7 @@ function Repas({ repas, col, notify }) {
             <span style={{ fontSize: 14 }}>{t.label}</span>
             <select value={assign[t.id]} onChange={(e) => setAssign({ ...assign, [t.id]: e.target.value })} style={{ padding: "8px 10px", borderRadius: 10, border: "1px solid #E3DBCB", fontSize: 13 }}>
               {KIDS.map((k) => <option key={k.name} value={k.name}>{k.name}</option>)}
+              <option value="Parents">Parents</option>
             </select>
           </div>
         ))}
@@ -1116,20 +1514,130 @@ function Activites({ activites, col, notify }) {
   );
 }
 
+function DayDetailModal({ day, tasks, repas, activites, onClose }) {
+  const { iso, dayName, date } = day;
+  const dayTasks = tasks.filter((t) => t.date === iso);
+  const dayRepas = repas.filter((r) => r.date === iso);
+  const dayActs = activites.filter((a) => (a.recurring && a.day === dayName) || (!a.recurring && a.date === iso)).sort((a, b) => a.time.localeCompare(b.time));
+  const isEmpty = dayTasks.length + dayRepas.length + dayActs.length === 0;
+
+  return (
+    <div
+      style={{ position: "fixed", inset: 0, background: "rgba(38,33,56,0.45)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 50 }}
+      onClick={onClose}
+    >
+      <div
+        style={{ background: "#FBF8F3", borderRadius: "18px 18px 0 0", padding: "20px 20px 28px", width: "100%", maxWidth: 560, maxHeight: "75vh", overflowY: "auto" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 16 }}>
+          <div>
+            <span className="display" style={{ fontStyle: "italic", fontSize: 20, color: "#262138" }}>{dayName}</span>{" "}
+            <span style={{ fontSize: 13, color: "#8A8071" }}>{date.toLocaleDateString("fr-FR", { day: "numeric", month: "long" })}</span>
+          </div>
+          <button onClick={onClose} aria-label="Fermer" style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}>
+            <X size={22} color="#8A8071" />
+          </button>
+        </div>
+
+        {isEmpty ? (
+          <div style={{ fontSize: 14, color: "#9C9384" }}>Rien de prévu ce jour-là.</div>
+        ) : (
+          <>
+            {dayActs.length > 0 && (
+              <div style={{ marginBottom: 14 }}>
+                <SectionLabel>Activités</SectionLabel>
+                {dayActs.map((a) => (
+                  <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 0", fontSize: 14 }}>
+                    <span>{a.icon}</span>
+                    <span className="mono" style={{ color: "#8A8071", fontSize: 13 }}>{a.time}–{a.endTime || "?"}</span>
+                    <span style={{ width: 7, height: 7, borderRadius: 4, background: colorFor(a.child) }} />
+                    <span>{a.activity} — {a.child}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {dayRepas.length > 0 && (
+              <div style={{ marginBottom: 14 }}>
+                <SectionLabel>Repas</SectionLabel>
+                {dayRepas.map((r) => (
+                  <div key={r.id} style={{ padding: "5px 0", fontSize: 14, color: "#5C5346" }}>
+                    🍽️ <strong>{r.meal}</strong> — table: {r.table}, débarrasse: {r.debarrasser}, yaourts: {r.yaourts}
+                  </div>
+                ))}
+              </div>
+            )}
+            {dayTasks.length > 0 && (
+              <div>
+                <SectionLabel>Tâches, travail & amis</SectionLabel>
+                {dayTasks.map((t) => (
+                  t.isWork ? (
+                    <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 0", fontSize: 14 }}>
+                      <span>{t.icon}</span>
+                      <strong>{t.assignee}</strong>
+                      <span style={{ color: "#8A8071", fontSize: 13 }}>{t.isRest ? "— Repos" : `— Travail ${t.time}–${t.endTime}`}</span>
+                    </div>
+                  ) : t.isFriend ? (
+                    <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 0", fontSize: 14 }}>
+                      <span>👥</span>
+                      <strong>{t.friendName}</strong>
+                      <span style={{ color: "#8A8071", fontSize: 13 }}>— {t.moment}{t.arrivalTime && ` · arrivée ${t.arrivalTime}`}</span>
+                    </div>
+                  ) : (
+                    <div key={t.id} style={{ padding: "5px 0", fontSize: 14, textDecoration: t.done ? "line-through" : "none", color: t.done ? "#9C9384" : "#5C5346" }}>
+                      ✓ {t.text} <span style={{ color: "#8A8071" }}>({t.assignee})</span>
+                    </div>
+                  )
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function Calendrier({ tasks, repas, activites }) {
-  const [offset, setOffset] = useState(0);
-  const dates = weekDates(offset);
+  const [viewMode, setViewMode] = useState("mois"); // "mois" | "semaine"
+  const [offset, setOffset] = useState(0); // décalage semaines (vue semaine)
+  const [monthOffset, setMonthOffset] = useState(0); // décalage mois (vue mois)
+  const [selectedDay, setSelectedDay] = useState(null); // jour cliqué en vue mois
   const isoToday = todayISO();
   const undated = tasks.filter((t) => !t.date && !t.done);
 
+  const refMonth = new Date();
+  refMonth.setDate(1);
+  refMonth.setMonth(refMonth.getMonth() + monthOffset);
+  const monthDays = monthGridDates(refMonth);
+  const monthLabel = refMonth.toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
+
+  const dates = weekDates(offset);
+
+  const LEGEND = [
+    { id: "tache", label: "Tâche" },
+    { id: "travail", label: "Travail" },
+    { id: "repos", label: "Repos" },
+    { id: "amis", label: "Amis" },
+    { id: "activite", label: "Activité" },
+    { id: "repas", label: "Repas" },
+  ];
+
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
-        <button onClick={() => setOffset(offset - 1)} style={navBtn} aria-label="Semaine précédente"><ChevronLeft size={18} /></button>
-        <button onClick={() => setOffset(0)} style={{ ...ghostBtn, fontSize: 12 }}>
-          {offset === 0 ? "Cette semaine" : dates[0].toLocaleDateString("fr-FR", { day: "numeric", month: "short" }) + " – " + dates[6].toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}
+      <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+        <button
+          onClick={() => setViewMode("mois")}
+          style={{ flex: 1, padding: "9px 0", borderRadius: 10, border: "1px solid #E3DBCB", fontWeight: 600, fontSize: 13, cursor: "pointer", background: viewMode === "mois" ? "var(--accent)" : "#FBF8F3", color: viewMode === "mois" ? "#FBF8F3" : "var(--accent)" }}
+        >
+          Mois
         </button>
-        <button onClick={() => setOffset(offset + 1)} style={navBtn} aria-label="Semaine suivante"><ChevronRight size={18} /></button>
+        <button
+          onClick={() => setViewMode("semaine")}
+          style={{ flex: 1, padding: "9px 0", borderRadius: 10, border: "1px solid #E3DBCB", fontWeight: 600, fontSize: 13, cursor: "pointer", background: viewMode === "semaine" ? "var(--accent)" : "#FBF8F3", color: viewMode === "semaine" ? "#FBF8F3" : "var(--accent)" }}
+        >
+          Semaine
+        </button>
       </div>
 
       {undated.length > 0 && (
@@ -1138,54 +1646,125 @@ function Calendrier({ tasks, repas, activites }) {
         ))}</Card>
       )}
 
-      {dates.map((d, i) => {
-        const iso = toISO(d);
-        const dayName = DAYS[i];
-        const dayTasks = tasks.filter((t) => t.date === iso);
-        const dayRepas = repas.filter((r) => r.date === iso);
-        const dayActs = activites.filter((a) => (a.recurring && a.day === dayName) || (!a.recurring && a.date === iso)).sort((a, b) => a.time.localeCompare(b.time));
-        const isToday = iso === isoToday;
-        const isEmpty = dayTasks.length + dayRepas.length + dayActs.length === 0;
-        return (
-          <Card key={iso} style={isToday ? { border: "1.5px solid var(--accent)" } : {}}>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 10 }}>
-              <span className="display" style={{ fontStyle: "italic", fontSize: 16, color: isToday ? "var(--accent)" : "#262138" }}>{dayName}</span>
-              <span style={{ fontSize: 12, color: "#8A8071" }}>{d.toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}</span>
-              {isToday && <span style={{ fontSize: 10, color: "var(--accent)", fontWeight: 700, textTransform: "uppercase" }}>· aujourd'hui</span>}
-            </div>
-            {isEmpty ? <div style={{ fontSize: 13, color: "#9C9384" }}>Rien de prévu.</div> : (
-              <>
-                {dayActs.map((a) => (
-                  <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0", fontSize: 13 }}>
-                    <span>{a.icon}</span>
-                    <span className="mono" style={{ color: "#8A8071", width: 76 }}>{a.time}–{a.endTime || "?"}</span>
-                    <span style={{ width: 7, height: 7, borderRadius: 4, background: colorFor(a.child) }} />
-                    <span>{a.activity} — {a.child}</span>
-                  </div>
-                ))}
-                {dayRepas.map((r) => (
-                  <div key={r.id} style={{ padding: "4px 0", fontSize: 13, color: "#5C5346" }}>🍽️ <strong>{r.meal}</strong> — table: {r.table}, débarrasse: {r.debarrasser}, yaourts: {r.yaourts}</div>
-                ))}
-                {dayTasks.map((t) => (
-                  t.isWork ? (
-                    <div key={t.id} style={{ padding: "4px 0", fontSize: 13, display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap", flexWrap: "nowrap" }}>
-                      <span style={{ flexShrink: 0 }}>{t.icon}</span>
-                      <span className="mono" style={{ color: "#8A8071", flexShrink: 0 }}>{t.isRest ? "Repos" : `${t.time}–${t.endTime}`}</span>
+      {viewMode === "mois" ? (
+        <>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+            <button onClick={() => setMonthOffset(monthOffset - 1)} style={navBtn} aria-label="Mois précédent"><ChevronLeft size={18} /></button>
+            <button onClick={() => setMonthOffset(0)} style={{ ...ghostBtn, fontSize: 13, textTransform: "capitalize" }}>{monthLabel}</button>
+            <button onClick={() => setMonthOffset(monthOffset + 1)} style={navBtn} aria-label="Mois suivant"><ChevronRight size={18} /></button>
+          </div>
+
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+            {LEGEND.map((l) => (
+              <span key={l.id} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10, color: "#5C5346" }}>
+                <span style={{ width: 8, height: 8, borderRadius: 2, background: CAT_COLORS[l.id], flexShrink: 0 }} />
+                {l.label}
+              </span>
+            ))}
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 3, marginBottom: 4 }}>
+            {DAYS.map((d) => (
+              <div key={d} style={{ fontSize: 10, color: "#8A8071", textAlign: "center", fontWeight: 600 }}>{d.slice(0, 2)}</div>
+            ))}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 3 }}>
+            {monthDays.map((d) => {
+              const iso = toISO(d);
+              const dayName = DAYS[(d.getDay() + 6) % 7];
+              const inMonth = d.getMonth() === refMonth.getMonth();
+              const items = buildDayItems(iso, dayName, tasks, repas, activites);
+              const isToday = iso === isoToday;
+              return (
+                <div
+                  key={iso}
+                  onClick={() => setSelectedDay({ iso, dayName, date: d })}
+                  style={{
+                    minHeight: 66,
+                    border: isToday ? "1.5px solid var(--accent)" : "1px solid #E3DBCB",
+                    borderRadius: 6,
+                    padding: 3,
+                    background: inMonth ? "#FBF8F3" : "#F1ECE2",
+                    opacity: inMonth ? 1 : 0.5,
+                    cursor: "pointer",
+                  }}
+                >
+                  <div style={{ fontSize: 11, fontWeight: isToday ? 700 : 500, color: isToday ? "var(--accent)" : "#5C5346", marginBottom: 2 }}>{d.getDate()}</div>
+                  {items.slice(0, 3).map((it, i) => (
+                    <div key={i} style={{ background: it.color, color: "#FBF8F3", fontSize: 9, borderRadius: 3, padding: "1px 3px", marginBottom: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {it.label}
                     </div>
-                  ) : t.isFriend ? (
-                    <div key={t.id} style={{ padding: "4px 0", fontSize: 13, display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap", overflow: "hidden" }}>
-                      <span style={{ flexShrink: 0 }}>👥</span>
-                      <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}><strong>{t.friendName}</strong> — {t.moment}{t.arrivalTime && ` · ${t.arrivalTime}`}</span>
-                    </div>
-                  ) : (
-                    <div key={t.id} style={{ padding: "4px 0", fontSize: 13, textDecoration: t.done ? "line-through" : "none", color: t.done ? "#9C9384" : "#5C5346" }}>✓ {t.text} <span style={{ color: "#8A8071" }}>({t.assignee})</span></div>
-                  )
-                ))}
-              </>
-            )}
-          </Card>
-        );
-      })}
+                  ))}
+                  {items.length > 3 && <div style={{ fontSize: 9, color: "#8A8071" }}>+{items.length - 3}</div>}
+                </div>
+              );
+            })}
+          </div>
+        </>
+      ) : (
+        <>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+            <button onClick={() => setOffset(offset - 1)} style={navBtn} aria-label="Semaine précédente"><ChevronLeft size={18} /></button>
+            <button onClick={() => setOffset(0)} style={{ ...ghostBtn, fontSize: 12 }}>
+              {offset === 0 ? "Cette semaine" : dates[0].toLocaleDateString("fr-FR", { day: "numeric", month: "short" }) + " – " + dates[6].toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}
+            </button>
+            <button onClick={() => setOffset(offset + 1)} style={navBtn} aria-label="Semaine suivante"><ChevronRight size={18} /></button>
+          </div>
+
+          {dates.map((d, i) => {
+            const iso = toISO(d);
+            const dayName = DAYS[i];
+            const dayTasks = tasks.filter((t) => t.date === iso);
+            const dayRepas = repas.filter((r) => r.date === iso);
+            const dayActs = activites.filter((a) => (a.recurring && a.day === dayName) || (!a.recurring && a.date === iso)).sort((a, b) => a.time.localeCompare(b.time));
+            const isToday = iso === isoToday;
+            const isEmpty = dayTasks.length + dayRepas.length + dayActs.length === 0;
+            return (
+              <Card key={iso} style={isToday ? { border: "1.5px solid var(--accent)" } : {}}>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 10 }}>
+                  <span className="display" style={{ fontStyle: "italic", fontSize: 16, color: isToday ? "var(--accent)" : "#262138" }}>{dayName}</span>
+                  <span style={{ fontSize: 12, color: "#8A8071" }}>{d.toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}</span>
+                  {isToday && <span style={{ fontSize: 10, color: "var(--accent)", fontWeight: 700, textTransform: "uppercase" }}>· aujourd'hui</span>}
+                </div>
+                {isEmpty ? <div style={{ fontSize: 13, color: "#9C9384" }}>Rien de prévu.</div> : (
+                  <>
+                    {dayActs.map((a) => (
+                      <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0", fontSize: 13 }}>
+                        <span>{a.icon}</span>
+                        <span className="mono" style={{ color: "#8A8071", width: 76 }}>{a.time}–{a.endTime || "?"}</span>
+                        <span style={{ width: 7, height: 7, borderRadius: 4, background: colorFor(a.child) }} />
+                        <span>{a.activity} — {a.child}</span>
+                      </div>
+                    ))}
+                    {dayRepas.map((r) => (
+                      <div key={r.id} style={{ padding: "4px 0", fontSize: 13, color: "#5C5346" }}>🍽️ <strong>{r.meal}</strong> — table: {r.table}, débarrasse: {r.debarrasser}, yaourts: {r.yaourts}</div>
+                    ))}
+                    {dayTasks.map((t) => (
+                      t.isWork ? (
+                        <div key={t.id} style={{ padding: "4px 0", fontSize: 13, display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap", flexWrap: "nowrap" }}>
+                          <span style={{ flexShrink: 0 }}>{t.icon}</span>
+                          <span className="mono" style={{ color: "#8A8071", flexShrink: 0 }}>{t.isRest ? "Repos" : `${t.time}–${t.endTime}`}</span>
+                        </div>
+                      ) : t.isFriend ? (
+                        <div key={t.id} style={{ padding: "4px 0", fontSize: 13, display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap", overflow: "hidden" }}>
+                          <span style={{ flexShrink: 0 }}>👥</span>
+                          <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}><strong>{t.friendName}</strong> — {t.moment}{t.arrivalTime && ` · ${t.arrivalTime}`}</span>
+                        </div>
+                      ) : (
+                        <div key={t.id} style={{ padding: "4px 0", fontSize: 13, textDecoration: t.done ? "line-through" : "none", color: t.done ? "#9C9384" : "#5C5346" }}>✓ {t.text} <span style={{ color: "#8A8071" }}>({t.assignee})</span></div>
+                      )
+                    ))}
+                  </>
+                )}
+              </Card>
+            );
+          })}
+        </>
+      )}
+
+      {selectedDay && (
+        <DayDetailModal day={selectedDay} tasks={tasks} repas={repas} activites={activites} onClose={() => setSelectedDay(null)} />
+      )}
     </div>
   );
 }
@@ -1198,4 +1777,3 @@ const navBtn = { background: "#FBF8F3", border: "1px solid #E3DBCB", borderRadiu
 function checkStyle(done) {
   return { width: 24, height: 24, borderRadius: 7, border: done ? "none" : "1.5px solid #C9BFA9", background: done ? "var(--accent)" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, padding: 0 };
 }
-
