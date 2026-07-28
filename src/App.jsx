@@ -568,9 +568,10 @@ function weatherIcon(code) {
   return "🌡️";
 }
 
-function Meteo() {
+function Meteo({ onData }) {
   const [status, setStatus] = useState("loading"); // loading | ready | denied | error
   const [data, setData] = useState(null);
+  const [placeName, setPlaceName] = useState("");
 
   const load = () => {
     setStatus("loading");
@@ -582,17 +583,35 @@ function Meteo() {
       async (pos) => {
         try {
           const { latitude, longitude } = pos.coords;
-          const url = `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,weather_code,wind_speed_10m&hourly=temperature_2m,weather_code&timezone=auto&forecast_days=2`;
-          const res = await fetch(url);
-          const json = await res.json();
+          const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,weather_code,wind_speed_10m&hourly=temperature_2m,weather_code&timezone=auto&forecast_days=2`;
+          const geocodeUrl = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${latitude}&lon=${longitude}&zoom=10&accept-language=fr`;
+
+          // Les deux requêtes partent en parallèle pour gagner du temps.
+          const [weatherRes, geoRes] = await Promise.all([
+            fetch(weatherUrl),
+            fetch(geocodeUrl).catch(() => null),
+          ]);
+          const json = await weatherRes.json();
           setData(json);
+          onData?.(json);
+
+          if (geoRes) {
+            try {
+              const geoJson = await geoRes.json();
+              const a = geoJson.address || {};
+              const name = a.city || a.town || a.village || a.municipality || a.county || geoJson.name || "";
+              setPlaceName(name);
+            } catch {
+              // pas grave si le nom du lieu ne se charge pas, la météo reste affichée
+            }
+          }
           setStatus("ready");
         } catch {
           setStatus("error");
         }
       },
       () => setStatus("denied"),
-      { timeout: 10000 }
+      { timeout: 8000, maximumAge: 5 * 60 * 1000, enableHighAccuracy: false }
     );
   };
 
@@ -638,7 +657,10 @@ function Meteo() {
       <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 14 }}>
         <span style={{ fontSize: 40 }}>{weatherIcon(current.weather_code)}</span>
         <div>
-          <div className="mono" style={{ fontSize: 28, fontWeight: 600, color: "#262138" }}>{Math.round(current.temperature_2m)}°C</div>
+          <div className="mono" style={{ fontSize: 28, fontWeight: 600, color: "#262138", display: "flex", alignItems: "baseline", gap: 8 }}>
+            {Math.round(current.temperature_2m)}°C
+            {placeName && <span style={{ fontFamily: "'Public Sans', sans-serif", fontSize: 13, fontWeight: 500, color: "#8A8071" }}>{placeName}</span>}
+          </div>
           <div style={{ fontSize: 12, color: "#8A8071" }}>Vent {Math.round(current.wind_speed_10m)} km/h</div>
         </div>
       </div>
@@ -678,9 +700,19 @@ function Overview({ tasks, shopping, repas, activites, goTo }) {
   const tomorrowActs = activites.filter((a) => (a.recurring && a.day === tomorrowDayName) || (!a.recurring && a.date === tomorrowIso)).sort((a, b) => a.time.localeCompare(b.time));
   const hasTomorrowInfo = tomorrowTasks.length + tomorrowRepas.length + tomorrowActs.length > 0;
 
+  const [weatherData, setWeatherData] = useState(null);
+  const tomorrowForecast = (() => {
+    if (!weatherData) return null;
+    const times = weatherData.hourly.time;
+    let idx = times.findIndex((t) => t.startsWith(tomorrowIso) && t.slice(11, 13) === "12");
+    if (idx < 0) idx = times.findIndex((t) => t.startsWith(tomorrowIso));
+    if (idx < 0) return null;
+    return { temp: weatherData.hourly.temperature_2m[idx], code: weatherData.hourly.weather_code[idx] };
+  })();
+
   return (
     <div>
-      <Meteo />
+      <Meteo onData={setWeatherData} />
 
       <Card style={{ border: "1.5px solid var(--accent)" }}>
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 14 }}>
@@ -739,7 +771,14 @@ function Overview({ tasks, shopping, repas, activites, goTo }) {
       {hasTomorrowInfo && (
         <Card>
           <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 14 }}>
-            <span className="display" style={{ fontStyle: "italic", fontSize: 18, color: "#262138" }}>Prévu demain — {tomorrowDayName}</span>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span className="display" style={{ fontStyle: "italic", fontSize: 18, color: "#262138" }}>Prévu demain — {tomorrowDayName}</span>
+              {tomorrowForecast && (
+                <span style={{ display: "flex", alignItems: "center", gap: 4, background: "#F1ECE2", borderRadius: 20, padding: "2px 8px", fontSize: 12 }}>
+                  {weatherIcon(tomorrowForecast.code)} <span className="mono" style={{ fontWeight: 600 }}>{Math.round(tomorrowForecast.temp)}°</span>
+                </span>
+              )}
+            </div>
             <span style={{ fontSize: 13, color: "#8A8071" }}>{tomorrowDate.toLocaleDateString("fr-FR", { day: "numeric", month: "long" })}</span>
           </div>
           {tomorrowActs.length > 0 && (
@@ -1663,12 +1702,12 @@ function Calendrier({ tasks, repas, activites }) {
             ))}
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 3, marginBottom: 4 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 3, marginBottom: 4 }}>
             {DAYS.map((d) => (
               <div key={d} style={{ fontSize: 10, color: "#8A8071", textAlign: "center", fontWeight: 600 }}>{d.slice(0, 2)}</div>
             ))}
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 3 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 3 }}>
             {monthDays.map((d) => {
               const iso = toISO(d);
               const dayName = DAYS[(d.getDay() + 6) % 7];
@@ -1681,6 +1720,8 @@ function Calendrier({ tasks, repas, activites }) {
                   onClick={() => setSelectedDay({ iso, dayName, date: d })}
                   style={{
                     minHeight: 66,
+                    minWidth: 0,
+                    overflow: "hidden",
                     border: isToday ? "1.5px solid var(--accent)" : "1px solid #E3DBCB",
                     borderRadius: 6,
                     padding: 3,
