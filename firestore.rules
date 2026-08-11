@@ -1,14 +1,48 @@
 rules_version = '2';
 
-// ⚠️ Ces règles sont volontairement simples : n'importe qui connaissant l'URL de
-// votre projet Firebase pourrait lire/écrire les données. Comme l'identifiant du
-// projet n'est connu que de vous, c'est un niveau de sécurité correct pour un usage
-// familial privé, mais PAS un vrai contrôle d'accès. Si vous voulez plus de sécurité
-// plus tard, ajoutez l'authentification Firebase (voir le README).
+// Vraies règles de sécurité : chaque personne doit être authentifiée (Firebase
+// Authentication) et ne peut lire/écrire que les données de SON foyer. Le foyer de
+// chaque compte est stocké dans users/{uid}.householdId.
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /{document=**} {
-      allow read, write: if true;
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    function myHousehold() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.householdId;
+    }
+    function isAdmin() {
+      return isSignedIn() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
+    }
+
+    // Chacun peut lire/modifier sa propre fiche de profil ; l'administrateur (Jerem)
+    // peut aussi consulter la liste de tous les utilisateurs (lecture seule).
+    match /users/{uid} {
+      allow read: if isSignedIn() && (request.auth.uid == uid || isAdmin());
+      allow create: if isSignedIn() && request.auth.uid == uid;
+      allow update: if isSignedIn() && request.auth.uid == uid;
+    }
+
+    // Données historiques du foyer "default" (Jerem & Jennifer), déjà en place
+    // avant l'ajout de l'authentification — pas de migration nécessaire.
+    match /tasks/{doc}      { allow read, write: if isSignedIn() && myHousehold() == "default"; }
+    match /repas/{doc}      { allow read, write: if isSignedIn() && myHousehold() == "default"; }
+    match /activites/{doc}  { allow read, write: if isSignedIn() && myHousehold() == "default"; }
+    match /shopping/{doc}   { allow read, write: if isSignedIn() && myHousehold() == "default"; }
+    match /valise/{doc}     { allow read, write: if isSignedIn() && myHousehold() == "default"; }
+    match /friends/{doc}    { allow read, write: if isSignedIn() && myHousehold() == "default"; }
+
+    // Nouveaux foyers créés via "Créer mon compte" : données isolées par foyer.
+    match /households/{hid}/{coll}/{doc} {
+      allow read, write: if isSignedIn() && myHousehold() == hid;
+    }
+
+    // Jetons de notification : lecture/écriture réservée aux personnes connectées
+    // (la fonction serverless, elle, utilise un accès administrateur qui ignore
+    // ces règles, donc l'envoi de notifications n'est pas affecté).
+    match /devices/{deviceId} {
+      allow read, write: if isSignedIn();
     }
   }
 }

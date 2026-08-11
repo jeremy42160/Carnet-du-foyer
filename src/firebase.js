@@ -1,6 +1,7 @@
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 import { getMessaging, isSupported } from "firebase/messaging";
+import { getAuth, setPersistence, browserLocalPersistence } from "firebase/auth";
 
 // ⚠️ Remplacez par la config de VOTRE projet Firebase
 // (Console Firebase → Paramètres du projet → Vos applications → config).
@@ -20,6 +21,17 @@ export const VAPID_KEY = "BG0Zy6AdpDtUyAYx60N1OPO83vBvKrBMp4gN5UJiPFK_mM7_kq8Feh
 
 export const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app);
+export const auth = getAuth(app);
+
+// Session conservée indéfiniment sur cet appareil/navigateur (PC comme mobile) :
+// pas de reconnexion à chaque ouverture, tant que la personne ne se déconnecte
+// pas elle-même ou n'efface pas les données du navigateur. C'est le mode le plus
+// durable proposé par Firebase — on le fixe explicitement pour ne pas dépendre
+// du comportement par défaut du navigateur (certains, comme la navigation privée,
+// se comportent différemment).
+setPersistence(auth, browserLocalPersistence).catch((e) => {
+  console.error("Impossible de configurer la persistance de session", e);
+});
 
 export async function getMessagingIfSupported() {
   try {

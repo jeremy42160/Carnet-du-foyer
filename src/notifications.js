@@ -15,7 +15,7 @@ const DEFAULT_CATEGORIES = { taches: true, courses: true, valise: true, activite
 // Demande la permission, récupère le token FCM et l'enregistre dans Firestore
 // (collection "devices") pour que la fonction serverless puisse envoyer des
 // notifications à cet appareil. Les préférences par catégorie démarrent toutes activées.
-export async function enableNotifications(personName) {
+export async function enableNotifications(personName, householdId) {
   if (!("serviceWorker" in navigator) || !("Notification" in window)) {
     throw new Error("Ce navigateur ne supporte pas les notifications.");
   }
@@ -32,6 +32,7 @@ export async function enableNotifications(personName) {
   await setDoc(doc(db, "devices", deviceId), {
     token,
     person: personName || "Inconnu",
+    householdId,
     categories: DEFAULT_CATEGORIES,
     updatedAt: Date.now(),
   });
