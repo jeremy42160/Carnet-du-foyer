@@ -9,7 +9,7 @@ import { collection, onSnapshot } from "firebase/firestore";
 import { db } from "./firebase";
 import { enableNotifications, disableNotifications, getMyDevice, setCategoryPref, NOTIF_CATEGORIES } from "./notifications";
 import { sendPush } from "./push";
-import { watchAuthState, getMyHousehold, login, register, logout, touchLastLogin, saveNavTabs } from "./auth";
+import { watchAuthState, getMyHousehold, login, register, logout, touchLastLogin, saveNavTabs, saveProfileInfo, saveFavoriteClub, saveHomeWidgets } from "./auth";
 
 const TABS = [
   { id: "jour", label: "Aujourd'hui", icon: Home },
@@ -205,7 +205,7 @@ function suggestAssignment(records, kids, mealFields) {
   return result;
 }
 
-function AppContent({ householdId, username, isAdmin, onLogout, navTabs, updateNavTabs }) {
+function AppContent({ householdId, username, isAdmin, onLogout, navTabs, updateNavTabs, uid, profileInfo, updateProfileInfo, favoriteClub, updateFavoriteClub, homeWidgets, updateHomeWidgets }) {
   const effectiveNavTabs = navTabs && navTabs.length ? navTabs : TABS.map((t) => t.id);
   const { config: householdConfig, loading: configLoading, save: saveHouseholdConfig, setConfig: setHouseholdConfigLocal } = useHouseholdConfig(householdId);
 
@@ -281,7 +281,7 @@ function AppContent({ householdId, username, isAdmin, onLogout, navTabs, updateN
             <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
           </div>
         ) : active === "jour" ? (
-          <Overview tasks={tasksC.items} shopping={shoppingC.items} repas={repasC.items} activites={activitesC.items} goTo={setActive} notify={notify} username={username} householdId={householdId} />
+          <Overview tasks={tasksC.items} shopping={shoppingC.items} repas={repasC.items} activites={activitesC.items} goTo={setActive} notify={notify} username={username} householdId={householdId} favoriteClub={favoriteClub} updateFavoriteClub={updateFavoriteClub} homeWidgets={homeWidgets} updateHomeWidgets={updateHomeWidgets} />
         ) : active === "taches" ? (
           <Tasks tasks={tasksC.items} col={tasksC} notify={notify} friends={friendsC.items} friendsCol={friendsC} activites={activitesC.items} activitesCol={activitesC} initialCategory={taskRequest.category} requestToken={taskRequest.token} initialDate={taskRequest.date} sendPush={push} kids={kids} workers={workers} />
         ) : active === "calendrier" ? (
@@ -293,7 +293,7 @@ function AppContent({ householdId, username, isAdmin, onLogout, navTabs, updateN
         ) : active === "valise" ? (
           <Valise valise={valiseC.items} col={valiseC} notify={notify} sendPush={push} />
         ) : active === "profil" ? (
-          <Profil accentColor={accentColor} updateAccent={updateAccent} householdId={householdId} username={username} isAdmin={isAdmin} onLogout={onLogout} householdConfig={householdConfig} saveHouseholdConfig={saveHouseholdConfig} navTabs={effectiveNavTabs} updateNavTabs={updateNavTabs} />
+          <Profil accentColor={accentColor} updateAccent={updateAccent} householdId={householdId} username={username} isAdmin={isAdmin} onLogout={onLogout} householdConfig={householdConfig} saveHouseholdConfig={saveHouseholdConfig} navTabs={effectiveNavTabs} updateNavTabs={updateNavTabs} uid={uid} profileInfo={profileInfo} updateProfileInfo={updateProfileInfo} />
         ) : (
           <Shopping shopping={shoppingC.items} col={shoppingC} notify={notify} sendPush={push} />
         )}
@@ -684,6 +684,10 @@ export default function App() {
   const [username, setUsername] = useState("");
   const [isAdmin, setIsAdmin] = useState(false);
   const [navTabs, setNavTabs] = useState(null); // null = pas encore personnalisé, ordre par défaut
+  const [profileInfo, setProfileInfo] = useState({ displayName: "", contactEmail: "" });
+  const [favoriteClub, setFavoriteClub] = useState(null);
+  const DEFAULT_HOME_WIDGETS = { order: ["meteo", "sport"], sizes: { meteo: "full", sport: "full" } };
+  const [homeWidgets, setHomeWidgets] = useState(DEFAULT_HOME_WIDGETS);
 
   useEffect(() => {
     const unsub = watchAuthState(async (user) => {
@@ -704,6 +708,13 @@ export default function App() {
           setUsername(profile.username);
           setIsAdmin(!!profile.isAdmin);
           setNavTabs(Array.isArray(profile.navTabs) && profile.navTabs.length ? profile.navTabs : null);
+          setProfileInfo({ displayName: profile.displayName || "", contactEmail: profile.contactEmail || "" });
+          setFavoriteClub(profile.favoriteClub || null);
+          setHomeWidgets(
+            profile.homeWidgets && Array.isArray(profile.homeWidgets.order)
+              ? { order: profile.homeWidgets.order, sizes: profile.homeWidgets.sizes || {} }
+              : DEFAULT_HOME_WIDGETS
+          );
           setAuthState("signedIn");
           touchLastLogin(user.uid); // ne bloque pas l'affichage, se met à jour en arrière-plan
         } else {
@@ -734,6 +745,33 @@ export default function App() {
     }
   };
 
+  const updateProfileInfo = async (next) => {
+    setProfileInfo(next);
+    try {
+      await saveProfileInfo(uid, next);
+    } catch (e) {
+      console.error("Impossible d'enregistrer les informations du profil", e);
+    }
+  };
+
+  const updateFavoriteClub = async (club) => {
+    setFavoriteClub(club);
+    try {
+      await saveFavoriteClub(uid, club);
+    } catch (e) {
+      console.error("Impossible d'enregistrer le club favori", e);
+    }
+  };
+
+  const updateHomeWidgets = async (next) => {
+    setHomeWidgets(next);
+    try {
+      await saveHomeWidgets(uid, next);
+    } catch (e) {
+      console.error("Impossible d'enregistrer la disposition des widgets", e);
+    }
+  };
+
   if (authState === "loading") {
     return (
       <div style={{ minHeight: "100vh", background: "#F1ECE2", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -747,7 +785,7 @@ export default function App() {
     return <LoginScreen />;
   }
 
-  return <AppContent householdId={householdId} username={username} isAdmin={isAdmin} onLogout={handleLogout} navTabs={navTabs} updateNavTabs={updateNavTabs} />;
+  return <AppContent householdId={householdId} username={username} isAdmin={isAdmin} onLogout={handleLogout} navTabs={navTabs} updateNavTabs={updateNavTabs} uid={uid} profileInfo={profileInfo} updateProfileInfo={updateProfileInfo} favoriteClub={favoriteClub} updateFavoriteClub={updateFavoriteClub} homeWidgets={homeWidgets} updateHomeWidgets={updateHomeWidgets} />;
 }
 
 function Card({ children, style, onClick }) {
@@ -821,7 +859,127 @@ function Switch({ checked, onChange, disabled }) {
   );
 }
 
-function Profil({ accentColor, updateAccent, householdId, username, isAdmin, onLogout, householdConfig, saveHouseholdConfig, navTabs, updateNavTabs }) {
+// Section repliable, utilisée pour épurer la page Profil : chaque bloc est fermé
+// par défaut sauf indication contraire, et se déplie/replie au clic sur l'en-tête.
+function CollapsibleCard({ icon, title, subtitle, defaultOpen = false, children }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div style={{ background: "#FBF8F3", border: "1px solid #E3DBCB", borderRadius: 14, marginBottom: 14, overflow: "hidden" }}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: 18, background: "none", border: "none", cursor: "pointer", textAlign: "left" }}
+      >
+        {icon && <span style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 30, height: 30, borderRadius: 9, background: "color-mix(in srgb, var(--accent) 12%, white)", flexShrink: 0 }}>{icon}</span>}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: "#8A8071", textTransform: "uppercase", letterSpacing: "0.06em" }}>{title}</div>
+          {subtitle && <div style={{ fontSize: 12, color: "#9C9384", marginTop: 2 }}>{subtitle}</div>}
+        </div>
+        <ChevronRight size={18} color="#8A8071" style={{ transform: open ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.2s ease", flexShrink: 0 }} />
+      </button>
+      <div style={{ maxHeight: open ? 3000 : 0, transition: "max-height 0.25s ease", overflow: "hidden" }}>
+        <div style={{ padding: "0 18px 18px 18px" }}>{children}</div>
+      </div>
+    </div>
+  );
+}
+
+// Liste réordonnable en glisser-déposer (appui sur la poignée ⠿ puis glisser).
+// Principe important : on ne réorganise jamais le DOM pendant le geste, seul
+// l'élément saisi suit le doigt (translateY), les autres se décalent visuellement
+// (transform), et l'ordre réel n'est validé qu'au relâchement — ça évite tout
+// scintillement pendant le glisser, y compris sur mobile.
+function DraggableNavList({ items, renderItem, onReorder, rowHeight = 52 }) {
+  const [draggedIndex, setDraggedIndex] = useState(null);
+  const [dragY, setDragY] = useState(0);
+  const [order, setOrder] = useState(null); // positions visuelles pendant le drag
+  const startYRef = useRef(0);
+
+  const handleDown = (e, index) => {
+    startYRef.current = e.clientY ?? e.touches?.[0]?.clientY ?? 0;
+    setDraggedIndex(index);
+    setDragY(0);
+    setOrder(items.map((_, i) => i));
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+  };
+  const handleMove = (e) => {
+    if (draggedIndex === null) return;
+    const currentY = e.clientY ?? e.touches?.[0]?.clientY ?? 0;
+    const delta = currentY - startYRef.current;
+    setDragY(delta);
+    const shift = Math.round(delta / rowHeight);
+    const targetPos = Math.min(items.length - 1, Math.max(0, draggedIndex + shift));
+    const next = items.map((_, i) => i);
+    next.splice(next.indexOf(draggedIndex), 1);
+    next.splice(targetPos, 0, draggedIndex);
+    setOrder(next);
+  };
+  const handleUp = () => {
+    if (draggedIndex === null) return;
+    if (order) onReorder(order.map((i) => items[i]));
+    setDraggedIndex(null);
+    setOrder(null);
+    setDragY(0);
+  };
+
+  return (
+    <div onPointerMove={handleMove} onPointerUp={handleUp} onPointerLeave={handleUp}>
+      {items.map((item, index) => {
+        const isDragged = index === draggedIndex;
+        const visualIndex = order ? order.indexOf(index) : index;
+        const translateY = isDragged ? dragY : (visualIndex - index) * rowHeight;
+        return (
+          <div
+            key={item.id}
+            style={{
+              position: "relative",
+              zIndex: isDragged ? 10 : 1,
+              transform: `translateY(${translateY}px)`,
+              transition: isDragged ? "none" : "transform 0.18s ease",
+              background: isDragged ? "color-mix(in srgb, var(--accent) 10%, white)" : "transparent",
+              borderRadius: 10,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 4px", borderBottom: isDragged ? "none" : "1px solid #EFE9DD" }}>
+              <span
+                onPointerDown={(e) => handleDown(e, index)}
+                style={{ cursor: "grab", fontSize: 16, color: "#8A8071", padding: "4px 6px", touchAction: "none", userSelect: "none" }}
+              >
+                ⠿
+              </span>
+              {renderItem(item)}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// Ligne d'un enfant avec renommage en ligne : la valeur tapée reste locale
+// pendant la frappe, et n'est enregistrée (onRename) qu'à la validation
+// (Entrée ou perte de focus), pour éviter une écriture Firestore à chaque lettre.
+function EditableKidRow({ name, onRename, onRemove }) {
+  const [value, setValue] = useState(name);
+  useEffect(() => setValue(name), [name]);
+  const commit = () => {
+    if (value.trim() && value.trim() !== name) onRename(value);
+    else setValue(name);
+  };
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6, background: "#F1ECE2", borderRadius: 20, padding: "6px 8px 6px 14px" }}>
+      <input
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+        style={{ border: "none", background: "none", fontSize: 13, fontWeight: 600, color: "#5C5346", width: Math.max(50, value.length * 8), outline: "none" }}
+      />
+      <button onClick={onRemove} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "flex" }}><X size={14} color="#8A8071" /></button>
+    </div>
+  );
+}
+
+function Profil({ accentColor, updateAccent, householdId, username, isAdmin, onLogout, householdConfig, saveHouseholdConfig, navTabs, updateNavTabs, uid, profileInfo, updateProfileInfo }) {
   const [allUsers, setAllUsers] = useState([]);
   useEffect(() => {
     if (!isAdmin) return;
@@ -833,13 +991,15 @@ function Profil({ accentColor, updateAccent, householdId, username, isAdmin, onL
     return unsub;
   }, [isAdmin]);
 
-  const moveNavTab = (index, dir) => {
-    const next = [...navTabs];
-    const target = index + dir;
-    if (target < 0 || target >= next.length) return;
-    [next[index], next[target]] = [next[target], next[index]];
-    updateNavTabs(next);
+  const [displayNameInput, setDisplayNameInput] = useState(profileInfo?.displayName || "");
+  const [contactEmailInput, setContactEmailInput] = useState(profileInfo?.contactEmail || "");
+  const [profileSaved, setProfileSaved] = useState(false);
+  const saveProfileFields = async () => {
+    await updateProfileInfo({ displayName: displayNameInput.trim(), contactEmail: contactEmailInput.trim() });
+    setProfileSaved(true);
+    setTimeout(() => setProfileSaved(false), 2000);
   };
+
   const removeNavTab = (id) => {
     if (id === "profil") return; // toujours garder Profil accessible
     updateNavTabs(navTabs.filter((t) => t !== id));
@@ -880,6 +1040,11 @@ function Profil({ accentColor, updateAccent, householdId, username, isAdmin, onL
   };
   const removeKidProfil = (i) => {
     const next = (householdConfig.kids || []).filter((_, idx) => idx !== i);
+    saveHouseholdConfig({ kids: next });
+  };
+  const renameKidProfil = (i, newName) => {
+    if (!newName.trim()) return;
+    const next = (householdConfig.kids || []).map((k, idx) => (idx === i ? { ...k, name: newName.trim() } : k));
     saveHouseholdConfig({ kids: next });
   };
   const addWorkerProfil = () => {
@@ -939,9 +1104,8 @@ function Profil({ accentColor, updateAccent, householdId, username, isAdmin, onL
 
   return (
     <div>
-      <Card>
-        <SectionLabel>Compte</SectionLabel>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+      <CollapsibleCard icon={<User size={16} color="var(--accent)" />} title="Compte" subtitle={username} defaultOpen>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <span style={{ fontSize: 15, fontWeight: 600, color: "#262138" }}>{username}</span>
@@ -955,41 +1119,59 @@ function Profil({ accentColor, updateAccent, householdId, username, isAdmin, onL
           </div>
           <button onClick={onLogout} style={ghostBtn}>Déconnexion</button>
         </div>
-      </Card>
 
-      <Card>
-        <SectionLabel>Onglets de la barre du bas</SectionLabel>
-        <div style={{ fontSize: 12, color: "#8A8071", marginBottom: 12 }}>
-          Réorganisez, retirez ou ajoutez des onglets — c'est mémorisé sur votre compte, même après reconnexion.
+        <div style={{ borderTop: "1px solid #EFE9DD", paddingTop: 14 }}>
+          <div style={{ fontSize: 12, color: "#8A8071", marginBottom: 12 }}>
+            Votre identifiant de connexion ({username}) ne peut pas changer, mais vous pouvez personnaliser le nom affiché et une adresse mail de contact.
+          </div>
+          <div style={{ marginBottom: 10 }}>
+            <label style={{ fontSize: 12, color: "#8A8071", display: "block", marginBottom: 5 }}>Nom affiché</label>
+            <input
+              value={displayNameInput}
+              onChange={(e) => setDisplayNameInput(e.target.value)}
+              placeholder={username}
+              style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 10, border: "1px solid #E3DBCB", fontSize: 14 }}
+            />
+          </div>
+          <div style={{ marginBottom: 12 }}>
+            <label style={{ fontSize: 12, color: "#8A8071", display: "block", marginBottom: 5 }}>Adresse mail de contact</label>
+            <input
+              type="email"
+              value={contactEmailInput}
+              onChange={(e) => setContactEmailInput(e.target.value)}
+              placeholder="vous@exemple.fr"
+              style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 10, border: "1px solid #E3DBCB", fontSize: 14 }}
+            />
+          </div>
+          <button
+            onClick={saveProfileFields}
+            style={{ background: "var(--accent)", color: "#FBF8F3", border: "none", borderRadius: 10, padding: "9px 16px", fontWeight: 600, fontSize: 13, cursor: "pointer" }}
+          >
+            {profileSaved ? "Enregistré ✓" : "Enregistrer"}
+          </button>
         </div>
-        {navTabs.map((id, i) => {
-          const tab = TABS.find((t) => t.id === id);
-          if (!tab) return null;
-          const Icon = tab.icon;
-          return (
-            <div key={id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 0", borderBottom: "1px solid #EFE9DD" }}>
-              <Icon size={16} color="#8A8071" />
-              <span style={{ flex: 1, fontSize: 14 }}>{tab.label}</span>
-              <button
-                onClick={() => moveNavTab(i, -1)}
-                disabled={i === 0}
-                aria-label="Monter"
-                style={{ background: "none", border: "none", cursor: i === 0 ? "default" : "pointer", opacity: i === 0 ? 0.3 : 1, padding: 4, fontSize: 16, color: "#5C5346" }}
-              >
-                ↑
-              </button>
-              <button
-                onClick={() => moveNavTab(i, 1)}
-                disabled={i === navTabs.length - 1}
-                aria-label="Descendre"
-                style={{ background: "none", border: "none", cursor: i === navTabs.length - 1 ? "default" : "pointer", opacity: i === navTabs.length - 1 ? 0.3 : 1, padding: 4, fontSize: 16, color: "#5C5346" }}
-              >
-                ↓
-              </button>
-              {id !== "profil" && <DeleteButton onDelete={() => removeNavTab(id)} label={`l'onglet ${tab.label}`} />}
-            </div>
-          );
-        })}
+      </CollapsibleCard>
+
+      <CollapsibleCard icon={<Shuffle size={16} color="var(--accent)" />} title="Onglets de la barre du bas" subtitle="Glissez pour réorganiser">
+        <div style={{ fontSize: 12, color: "#8A8071", marginBottom: 12 }}>
+          Appuyez sur ⠿ et glissez pour réorganiser. Retirez ou ajoutez des onglets — c'est mémorisé sur votre compte, même après reconnexion.
+        </div>
+        <DraggableNavList
+          items={navTabs.map((id) => ({ id }))}
+          onReorder={(reordered) => updateNavTabs(reordered.map((r) => r.id))}
+          renderItem={(item) => {
+            const tab = TABS.find((t) => t.id === item.id);
+            if (!tab) return null;
+            const Icon = tab.icon;
+            return (
+              <>
+                <Icon size={16} color="#8A8071" />
+                <span style={{ flex: 1, fontSize: 14 }}>{tab.label}</span>
+                {item.id !== "profil" && <DeleteButton onDelete={() => removeNavTab(item.id)} label={`l'onglet ${tab.label}`} />}
+              </>
+            );
+          }}
+        />
         {hiddenTabs.length > 0 && (
           <div style={{ marginTop: 14 }}>
             <div style={{ fontSize: 12, color: "#8A8071", marginBottom: 8 }}>Onglets masqués :</div>
@@ -1006,11 +1188,10 @@ function Profil({ accentColor, updateAccent, householdId, username, isAdmin, onL
             </div>
           </div>
         )}
-      </Card>
+      </CollapsibleCard>
 
       {isAdmin && (
-        <Card>
-          <SectionLabel>Utilisateurs ({allUsers.length})</SectionLabel>
+        <CollapsibleCard icon={<Users size={16} color="var(--accent)" />} title={`Utilisateurs (${allUsers.length})`}>
           {allUsers.length === 0 ? (
             <div style={{ fontSize: 13, color: "#8A8071" }}>Chargement…</div>
           ) : (
@@ -1036,11 +1217,10 @@ function Profil({ accentColor, updateAccent, householdId, username, isAdmin, onL
                 </div>
               ))
           )}
-        </Card>
+        </CollapsibleCard>
       )}
 
-      <Card>
-        <SectionLabel>Notifications</SectionLabel>
+      <CollapsibleCard icon={enabled ? <Bell size={16} color="var(--accent)" /> : <BellOff size={16} color="var(--accent)" />} title="Notifications">
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: enabled ? 16 : 0 }}>
           {enabled ? <Bell size={18} color="var(--accent)" /> : <BellOff size={18} color="#8A8071" />}
           <div style={{ flex: 1, fontSize: 14 }}>{enabled ? "Notifications activées" : "Notifications désactivées"}</div>
@@ -1059,10 +1239,9 @@ function Profil({ accentColor, updateAccent, householdId, username, isAdmin, onL
             ))}
           </div>
         )}
-      </Card>
+      </CollapsibleCard>
 
-      <Card>
-        <SectionLabel>Couleur de l'application</SectionLabel>
+      <CollapsibleCard icon={<Palette size={16} color="var(--accent)" />} title="Couleur de l'application">
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 4, justifyItems: "center" }}>
           {PRESET_COLORS.map((c) => {
             const selected = accentColor.toLowerCase() === c.hex.toLowerCase();
@@ -1125,12 +1304,11 @@ function Profil({ accentColor, updateAccent, householdId, username, isAdmin, onL
             style={{ position: "absolute", width: 0, height: 0, opacity: 0, pointerEvents: "none" }}
           />
         </div>
-      </Card>
+      </CollapsibleCard>
 
       {householdId !== "default" && householdConfig && (
         <>
-          <Card>
-            <SectionLabel>Enfants</SectionLabel>
+          <CollapsibleCard icon={<Pencil size={16} color="var(--accent)" />} title="Enfants" subtitle={`${(householdConfig.kids || []).length} enfant(s)`}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: householdConfig.hasKids ? 14 : 0 }}>
               <span style={{ fontSize: 14 }}>Nous avons des enfants</span>
               <Switch
@@ -1154,18 +1332,19 @@ function Profil({ accentColor, updateAccent, householdId, username, isAdmin, onL
                 </div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                   {(householdConfig.kids || []).map((k, i) => (
-                    <span key={i} style={{ display: "flex", alignItems: "center", gap: 6, background: "#F1ECE2", borderRadius: 20, padding: "6px 10px 6px 14px", fontSize: 13, fontWeight: 600, color: "#5C5346" }}>
-                      {k.name}
-                      <button onClick={() => removeKidProfil(i)} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "flex" }}><X size={14} color="#8A8071" /></button>
-                    </span>
+                    <EditableKidRow
+                      key={i}
+                      name={k.name}
+                      onRename={(newName) => renameKidProfil(i, newName)}
+                      onRemove={() => removeKidProfil(i)}
+                    />
                   ))}
                 </div>
               </>
             )}
-          </Card>
+          </CollapsibleCard>
 
-          <Card>
-            <SectionLabel>Travail</SectionLabel>
+          <CollapsibleCard icon={<Briefcase size={16} color="var(--accent)" />} title="Travail">
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: householdConfig.hasWork ? 14 : 0 }}>
               <span style={{ fontSize: 14 }}>Suivre des plannings de travail</span>
               <Switch
@@ -1199,7 +1378,7 @@ function Profil({ accentColor, updateAccent, householdId, username, isAdmin, onL
                 </div>
               </>
             )}
-          </Card>
+          </CollapsibleCard>
         </>
       )}
     </div>
@@ -1326,7 +1505,147 @@ function Meteo({ onData }) {
   );
 }
 
-function Overview({ tasks, shopping, repas, activites, goTo, notify, username, householdId }) {
+// Widget "Sport" : suit un seul club favori, choisi par recherche par nom
+// (API gratuite TheSportsDB), affiche le prochain match et le dernier résultat.
+function SportWidget({ favoriteClub, updateFavoriteClub }) {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState(null);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState("");
+  const [configuring, setConfiguring] = useState(!favoriteClub);
+
+  const [nextEvent, setNextEvent] = useState(null);
+  const [lastEvent, setLastEvent] = useState(null);
+  const [loadingEvents, setLoadingEvents] = useState(false);
+
+  const searchTeams = async () => {
+    if (!query.trim()) return;
+    setSearching(true);
+    setSearchError("");
+    try {
+      const res = await fetch(`https://www.thesportsdb.com/api/v1/json/3/searchteams.php?t=${encodeURIComponent(query.trim())}`);
+      const json = await res.json();
+      setResults(json.teams || []);
+    } catch {
+      setSearchError("Recherche indisponible pour le moment.");
+    }
+    setSearching(false);
+  };
+
+  const chooseTeam = (team) => {
+    const club = { id: team.idTeam, name: team.strTeam, badge: team.strTeamBadge, league: team.strLeague };
+    updateFavoriteClub(club);
+    setConfiguring(false);
+    setResults(null);
+    setQuery("");
+  };
+
+  useEffect(() => {
+    if (!favoriteClub || configuring) return;
+    setLoadingEvents(true);
+    (async () => {
+      try {
+        const [nextRes, lastRes] = await Promise.all([
+          fetch(`https://www.thesportsdb.com/api/v1/json/3/eventsnext.php?id=${favoriteClub.id}`),
+          fetch(`https://www.thesportsdb.com/api/v1/json/3/eventslast.php?id=${favoriteClub.id}`),
+        ]);
+        const nextJson = await nextRes.json();
+        const lastJson = await lastRes.json();
+        setNextEvent(nextJson.events?.[0] || null);
+        setLastEvent(lastJson.results?.[0] || null);
+      } catch {
+        // Silencieux : le widget affiche juste "indisponible" ci-dessous s'il n'y a rien.
+      }
+      setLoadingEvents(false);
+    })();
+  }, [favoriteClub?.id, configuring]);
+
+  if (configuring) {
+    return (
+      <Card>
+        <SectionLabel>Sport</SectionLabel>
+        <div style={{ fontSize: 12, color: "#8A8071", marginBottom: 10 }}>
+          Recherchez votre club favori (ex : "Real Madrid", "OM", "Lakers"…).
+        </div>
+        <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && searchTeams()}
+            placeholder="Nom du club…"
+            style={{ flex: 1, padding: "10px 12px", borderRadius: 10, border: "1px solid #E3DBCB", fontSize: 14 }}
+          />
+          <button onClick={searchTeams} disabled={searching} style={{ background: "var(--accent)", color: "#FBF8F3", border: "none", borderRadius: 10, padding: "0 16px", fontWeight: 600, fontSize: 13, cursor: "pointer" }}>
+            {searching ? "…" : "Chercher"}
+          </button>
+        </div>
+        {searchError && <div style={{ fontSize: 12, color: "#B0455A", marginBottom: 8 }}>{searchError}</div>}
+        {results && results.length === 0 && <div style={{ fontSize: 13, color: "#8A8071" }}>Aucun club trouvé.</div>}
+        {results && results.length > 0 && (
+          <div>
+            {results.slice(0, 6).map((team) => (
+              <button
+                key={team.idTeam}
+                onClick={() => chooseTeam(team)}
+                style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "8px 4px", background: "none", border: "none", borderBottom: "1px solid #EFE9DD", cursor: "pointer", textAlign: "left" }}
+              >
+                {team.strTeamBadge && <img src={team.strTeamBadge} alt="" style={{ width: 28, height: 28, objectFit: "contain" }} />}
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: "#262138" }}>{team.strTeam}</div>
+                  <div style={{ fontSize: 11, color: "#8A8071" }}>{team.strLeague}</div>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+        {favoriteClub && (
+          <button onClick={() => setConfiguring(false)} style={{ ...ghostBtn, marginTop: 10 }}>Annuler</button>
+        )}
+      </Card>
+    );
+  }
+
+  return (
+    <Card>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+        <SectionLabel>Sport</SectionLabel>
+        <button onClick={() => setConfiguring(true)} style={{ background: "none", border: "none", color: "var(--accent)", fontSize: 12, fontWeight: 600, cursor: "pointer", padding: 0 }}>
+          Changer
+        </button>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+        {favoriteClub.badge && <img src={favoriteClub.badge} alt="" style={{ width: 34, height: 34, objectFit: "contain" }} />}
+        <div style={{ fontSize: 15, fontWeight: 600, color: "#262138" }}>{favoriteClub.name}</div>
+      </div>
+      {loadingEvents ? (
+        <div style={{ fontSize: 13, color: "#8A8071" }}>Chargement…</div>
+      ) : (
+        <>
+          {nextEvent ? (
+            <div style={{ fontSize: 13, color: "#5C5346", marginBottom: 8 }}>
+              <span style={{ color: "#8A8071" }}>Prochain match — </span>
+              {nextEvent.strHomeTeam} vs {nextEvent.strAwayTeam}
+              <div style={{ fontSize: 11, color: "#8A8071" }}>
+                {new Date(nextEvent.dateEvent).toLocaleDateString("fr-FR", { day: "numeric", month: "long" })}
+                {nextEvent.strTime && ` à ${nextEvent.strTime.slice(0, 5)}`}
+              </div>
+            </div>
+          ) : (
+            <div style={{ fontSize: 12, color: "#9C9384", marginBottom: 8 }}>Aucun match à venir programmé.</div>
+          )}
+          {lastEvent && (
+            <div style={{ fontSize: 13, color: "#5C5346" }}>
+              <span style={{ color: "#8A8071" }}>Dernier résultat — </span>
+              {lastEvent.strHomeTeam} {lastEvent.intHomeScore} – {lastEvent.intAwayScore} {lastEvent.strAwayTeam}
+            </div>
+          )}
+        </>
+      )}
+    </Card>
+  );
+}
+
+function Overview({ tasks, shopping, repas, activites, goTo, notify, username, householdId, favoriteClub, updateFavoriteClub, homeWidgets, updateHomeWidgets }) {
   const iso = todayISO();
   const dayName = todayDayName();
   const dayTasks = tasks.filter((t) => t.date === iso);
@@ -1384,9 +1703,60 @@ function Overview({ tasks, shopping, repas, activites, goTo, notify, username, h
     setNotifPromptVisible(false);
   };
 
+  const WIDGET_DEFS = {
+    meteo: { label: "Météo", render: () => <Meteo onData={setWeatherData} /> },
+    sport: { label: "Sport", render: () => <SportWidget favoriteClub={favoriteClub} updateFavoriteClub={updateFavoriteClub} /> },
+  };
+  const [editingWidgets, setEditingWidgets] = useState(false);
+  const widgetOrder = (homeWidgets?.order || ["meteo", "sport"]).filter((id) => WIDGET_DEFS[id]);
+  const widgetSizes = homeWidgets?.sizes || {};
+  const toggleWidgetSize = (id) => {
+    const next = { ...widgetSizes, [id]: (widgetSizes[id] || "full") === "full" ? "half" : "full" };
+    updateHomeWidgets({ order: widgetOrder, sizes: next });
+  };
+  const reorderWidgets = (newOrder) => updateHomeWidgets({ order: newOrder, sizes: widgetSizes });
+
   return (
     <div>
-      <Meteo onData={setWeatherData} />
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+        <button onClick={() => setEditingWidgets((v) => !v)} style={{ background: "none", border: "none", color: "var(--accent)", fontSize: 12, fontWeight: 600, cursor: "pointer", padding: 0 }}>
+          {editingWidgets ? "✓ Terminé" : "✏️ Personnaliser"}
+        </button>
+      </div>
+
+      {editingWidgets ? (
+        <Card>
+          <div style={{ fontSize: 12, color: "#8A8071", marginBottom: 10 }}>
+            Appuyez sur ⠿ et glissez pour réorganiser. Choisissez la taille de chaque widget.
+          </div>
+          <DraggableNavList
+            items={widgetOrder.map((id) => ({ id }))}
+            onReorder={(reordered) => reorderWidgets(reordered.map((r) => r.id))}
+            renderItem={(item) => {
+              const size = widgetSizes[item.id] || "full";
+              return (
+                <>
+                  <span style={{ flex: 1, fontSize: 14 }}>{WIDGET_DEFS[item.id]?.label || item.id}</span>
+                  <button
+                    onClick={() => toggleWidgetSize(item.id)}
+                    style={{ background: "none", border: "1px solid #E3DBCB", borderRadius: 8, padding: "4px 10px", fontSize: 12, color: "var(--accent)", cursor: "pointer" }}
+                  >
+                    {size === "full" ? "▭ Pleine" : "▤ Moitié"}
+                  </button>
+                </>
+              );
+            }}
+          />
+        </Card>
+      ) : (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginBottom: 4 }}>
+          {widgetOrder.map((id) => (
+            <div key={id} style={{ flex: (widgetSizes[id] || "full") === "half" ? "1 1 calc(50% - 6px)" : "1 1 100%", minWidth: 150 }}>
+              {WIDGET_DEFS[id].render()}
+            </div>
+          ))}
+        </div>
+      )}
 
       {notifPromptVisible && (
         <Card style={{ border: "1.5px solid var(--accent)" }}>

@@ -44,6 +44,23 @@ export async function touchLastLogin(uid) {
   }
 }
 
+// Enregistre le nom affiché et l'adresse mail de contact (informative, ne sert
+// jamais à la connexion — l'identifiant de connexion reste immuable).
+export async function saveProfileInfo(uid, { displayName, contactEmail }) {
+  await setDoc(doc(db, "users", uid), { displayName, contactEmail }, { merge: true });
+}
+
+// Enregistre le club favori choisi pour le widget sport de la page "Aujourd'hui".
+export async function saveFavoriteClub(uid, club) {
+  await setDoc(doc(db, "users", uid), { favoriteClub: club }, { merge: true });
+}
+
+// Enregistre l'ordre et la taille (demi/pleine largeur) des widgets de la page
+// "Aujourd'hui", pour que chaque personne retrouve sa disposition personnalisée.
+export async function saveHomeWidgets(uid, homeWidgets) {
+  await setDoc(doc(db, "users", uid), { homeWidgets }, { merge: true });
+}
+
 // Enregistre la disposition personnalisée des onglets du bas (ordre + onglets
 // affichés) sur le compte de la personne connectée, pour qu'elle la retrouve
 // telle quelle à chaque reconnexion, sur n'importe quel appareil.
