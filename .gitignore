@@ -2,3 +2,5 @@ node_modules
 dist
 .firebase
 *.log
+.claude/
+CLAUDE.md

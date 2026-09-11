@@ -686,8 +686,7 @@ export default function App() {
   const [navTabs, setNavTabs] = useState(null); // null = pas encore personnalisé, ordre par défaut
   const [profileInfo, setProfileInfo] = useState({ displayName: "", contactEmail: "" });
   const [favoriteClub, setFavoriteClub] = useState(null);
-  const DEFAULT_HOME_WIDGETS = { order: ["meteo", "sport"], sizes: { meteo: "full", sport: "full" } };
-  const [homeWidgets, setHomeWidgets] = useState(DEFAULT_HOME_WIDGETS);
+  const [homeWidgets, setHomeWidgets] = useState(() => migrateHomeWidgets(null));
 
   useEffect(() => {
     const unsub = watchAuthState(async (user) => {
@@ -710,11 +709,7 @@ export default function App() {
           setNavTabs(Array.isArray(profile.navTabs) && profile.navTabs.length ? profile.navTabs : null);
           setProfileInfo({ displayName: profile.displayName || "", contactEmail: profile.contactEmail || "" });
           setFavoriteClub(profile.favoriteClub || null);
-          setHomeWidgets(
-            profile.homeWidgets && Array.isArray(profile.homeWidgets.order)
-              ? { order: profile.homeWidgets.order, sizes: profile.homeWidgets.sizes || {} }
-              : DEFAULT_HOME_WIDGETS
-          );
+          setHomeWidgets(migrateHomeWidgets(profile.homeWidgets));
           setAuthState("signedIn");
           touchLastLogin(user.uid); // ne bloque pas l'affichage, se met à jour en arrière-plan
         } else {
@@ -1396,6 +1391,53 @@ function weatherIcon(code) {
   return "🌡️";
 }
 
+function newWidgetId() {
+  return typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `w-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+// Ancien format à un seul widget par type ({ order, sizes }) -> nouveau format à
+// instances multiples ({ instances: [{ id, type, size, config }] }), qui permet
+// plusieurs widgets du même type avec leur propre configuration.
+function migrateHomeWidgets(raw) {
+  if (raw && Array.isArray(raw.instances)) return raw;
+  const order = raw?.order && Array.isArray(raw.order) ? raw.order : ["meteo", "sport"];
+  const sizes = raw?.sizes || {};
+  return { instances: order.map((type) => ({ id: type, type, size: sizes[type] || "full", config: {} })) };
+}
+
+// Générateur pseudo-aléatoire déterministe (seedé par une chaîne) : utilisé pour les
+// widgets à données illustratives, afin que le contenu affiché reste stable tant que
+// la config ne change pas (au lieu de changer à chaque rendu du composant).
+function seededRandom(seed) {
+  let h = 1779033703 ^ seed.length;
+  for (let i = 0; i < seed.length; i++) {
+    h = Math.imul(h ^ seed.charCodeAt(i), 3432918353);
+    h = (h << 13) | (h >>> 19);
+  }
+  return function () {
+    h = Math.imul(h ^ (h >>> 16), 2246822507);
+    h = Math.imul(h ^ (h >>> 13), 3266489909);
+    h ^= h >>> 16;
+    return (h >>> 0) / 4294967296;
+  };
+}
+function pickSeeded(rand, arr, n = 1) {
+  const pool = [...arr];
+  const out = [];
+  for (let i = 0; i < n && pool.length; i++) out.push(pool.splice(Math.floor(rand() * pool.length), 1)[0]);
+  return out;
+}
+
+// Bandeau d'avertissement utilisé par tous les widgets à contenu illustratif/fictif,
+// conformément au principe d'honnêteté sur les données du projet.
+function IllustrativeBanner({ children }) {
+  return (
+    <div style={{ background: "#FBF3E4", border: "1px solid #E8D9B8", borderRadius: 8, padding: "6px 10px", fontSize: 11, color: "#8A6D3B", marginBottom: 10 }}>
+      ⚠️ {children}
+    </div>
+  );
+}
+
 function Meteo({ onData }) {
   const [status, setStatus] = useState("loading"); // loading | ready | denied | error
   const [data, setData] = useState(null);
@@ -1645,6 +1687,439 @@ function SportWidget({ favoriteClub, updateFavoriteClub }) {
   );
 }
 
+// -- Contenus illustratifs partagés par les widgets ci-dessous (aucune API fiable
+// et gratuite trouvée pour ces données, donc générées de façon déterministe et
+// clairement signalées comme telles dans l'UI, voir IllustrativeBanner). --
+const NEWS_TEMPLATES = [
+  "{name} confirme sa préparation avant la prochaine échéance.",
+  "Un renfort est annoncé autour de {name} pour la suite de la saison.",
+  "{name} évoqué dans les médias sportifs cette semaine.",
+  "Le staff autour de {name} fait le point sur la forme du groupe.",
+];
+function fakeNews(name) {
+  const rand = seededRandom("news:" + name + ":" + todayISO());
+  return pickSeeded(rand, NEWS_TEMPLATES, 1)[0].replace("{name}", name);
+}
+function fakeForm(name) {
+  const rand = seededRandom("forme:" + name);
+  return Array.from({ length: 5 }, () => pickSeeded(rand, ["V", "N", "D"], 1)[0]).join(" ");
+}
+function fakeRank(name, max = 20) {
+  const rand = seededRandom("rank:" + name);
+  return 1 + Math.floor(rand() * max);
+}
+function fakeFixture(name) {
+  const rand = seededRandom("fixture:" + name);
+  const opponents = ["FC Rival", "AS Adversaire", "Union Sportive", "Racing Club", "Olympique Voisin"];
+  const opp = pickSeeded(rand, opponents, 1)[0];
+  const d = new Date();
+  d.setDate(d.getDate() + 2 + Math.floor(rand() * 10));
+  return { opponent: opp, date: d };
+}
+
+// Widget "Sport avancé" : assistant en cascade sport → pays → niveau → clubs
+// (ou directement joueurs pour le tennis), sélection multiple à chaque étape,
+// contenus cumulables. Données de clubs/ligues et résultats illustratifs.
+const SPORT_DATA = {
+  Football: {
+    countries: {
+      France: { levels: { "Ligue 1": ["Paris SG", "OM", "OL", "AS Monaco", "LOSC", "Stade Rennais"], "Ligue 2": ["FC Metz", "AJ Auxerre", "Grenoble Foot", "USL Dunkerque"] } },
+      Angleterre: { levels: { "Premier League": ["Man City", "Liverpool", "Arsenal", "Chelsea", "Man United", "Tottenham"] } },
+      Espagne: { levels: { "La Liga": ["Real Madrid", "FC Barcelone", "Atlético Madrid", "Séville FC"] } },
+      Italie: { levels: { "Serie A": ["Juventus", "AC Milan", "Inter Milan", "AS Roma"] } },
+    },
+  },
+  Basketball: {
+    countries: {
+      France: { levels: { "Betclic Élite": ["ASVEL", "Paris Basketball", "AS Monaco", "Le Mans"] } },
+      "États-Unis": { levels: { NBA: ["Lakers", "Celtics", "Warriors", "Bucks", "Nuggets"] } },
+    },
+  },
+  Rugby: {
+    countries: {
+      France: { levels: { "Top 14": ["Stade Toulousain", "Racing 92", "Stade Rochelais", "UBB"] } },
+    },
+  },
+  Tennis: { players: ["Novak Djokovic", "Carlos Alcaraz", "Jannik Sinner", "Iga Świątek", "Aryna Sabalenka", "Coco Gauff"] },
+};
+const SPORT_TYPES = ["Football", "Basketball", "Rugby", "Tennis"];
+const SPORT_CONTENT_TYPES = [
+  { id: "calendrier", label: "Calendrier" },
+  { id: "classement", label: "Classement" },
+  { id: "actualite", label: "Actualité" },
+  { id: "forme", label: "État de forme" },
+];
+function pillBtn(active) {
+  return { padding: "6px 12px", borderRadius: 20, border: active ? "1.5px solid var(--accent)" : "1px solid #E3DBCB", background: active ? "color-mix(in srgb, var(--accent) 12%, white)" : "none", color: active ? "var(--accent)" : "#5C5346", fontSize: 13, fontWeight: 600, cursor: "pointer" };
+}
+
+function SportAvanceWidget({ config, updateConfig }) {
+  const configured = config?.selections?.length > 0 && config?.contents && Object.values(config.contents).some(Boolean);
+  const [editing, setEditing] = useState(!configured);
+  const [sport, setSport] = useState(config?.sport || null);
+  const [country, setCountry] = useState(config?.country || null);
+  const [level, setLevel] = useState(config?.level || null);
+  const [selections, setSelections] = useState(config?.selections || []);
+  const [contents, setContents] = useState(config?.contents || { calendrier: true, classement: true, actualite: false, forme: false });
+
+  const isTennis = sport === "Tennis";
+  const countries = sport && !isTennis ? Object.keys(SPORT_DATA[sport].countries) : [];
+  const levels = sport && country && !isTennis ? Object.keys(SPORT_DATA[sport].countries[country].levels) : [];
+  const pool = isTennis ? SPORT_DATA.Tennis.players : sport && country && level ? SPORT_DATA[sport].countries[country].levels[level] : [];
+
+  const toggleSelection = (name) => setSelections((prev) => (prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name]));
+  const toggleContent = (id) => setContents((prev) => ({ ...prev, [id]: !prev[id] }));
+  const save = () => {
+    updateConfig({ sport, country: isTennis ? null : country, level: isTennis ? null : level, selections, contents });
+    setEditing(false);
+  };
+
+  if (!editing && configured) {
+    return (
+      <Card>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+          <SectionLabel>Sport — {config.sport}</SectionLabel>
+          <button onClick={() => setEditing(true)} style={{ background: "none", border: "none", color: "var(--accent)", fontSize: 12, fontWeight: 600, cursor: "pointer", padding: 0 }}>Modifier</button>
+        </div>
+        <IllustrativeBanner>Données de clubs/ligues illustratives — aucune API sportive fiable et gratuite trouvée pour toutes les compétitions.</IllustrativeBanner>
+        {config.selections.map((name) => (
+          <div key={name} style={{ paddingTop: 10, marginTop: 10, borderTop: "1px solid #EFE9DD" }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: "#262138", marginBottom: 6 }}>{name}</div>
+            {config.contents.calendrier && (() => {
+              const f = fakeFixture(name);
+              return <div style={{ fontSize: 13, color: "#5C5346", marginBottom: 4 }}><span style={{ color: "#8A8071" }}>Prochain — </span>{name} vs {f.opponent} · {f.date.toLocaleDateString("fr-FR", { day: "numeric", month: "long" })}</div>;
+            })()}
+            {config.contents.classement && <div style={{ fontSize: 13, color: "#5C5346", marginBottom: 4 }}><span style={{ color: "#8A8071" }}>Classement — </span>{fakeRank(name)}e</div>}
+            {config.contents.actualite && <div style={{ fontSize: 13, color: "#5C5346", marginBottom: 4 }}><span style={{ color: "#8A8071" }}>Actu — </span>{fakeNews(name)}</div>}
+            {config.contents.forme && <div style={{ fontSize: 13, color: "#5C5346" }}><span style={{ color: "#8A8071" }}>Forme — </span>{fakeForm(name)}</div>}
+          </div>
+        ))}
+      </Card>
+    );
+  }
+
+  return (
+    <Card>
+      <SectionLabel>Sport avancé — configuration</SectionLabel>
+      <IllustrativeBanner>Données de clubs/ligues illustratives — aucune API sportive fiable et gratuite trouvée pour toutes les compétitions.</IllustrativeBanner>
+
+      <div style={{ fontSize: 12, color: "#8A8071", marginBottom: 6 }}>1. Sport</div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
+        {SPORT_TYPES.map((s) => (
+          <button key={s} onClick={() => { setSport(s); setCountry(null); setLevel(null); setSelections([]); }} style={pillBtn(sport === s)}>{s}</button>
+        ))}
+      </div>
+
+      {sport && !isTennis && (
+        <>
+          <div style={{ fontSize: 12, color: "#8A8071", marginBottom: 6 }}>2. Pays</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
+            {countries.map((c) => (
+              <button key={c} onClick={() => { setCountry(c); setLevel(null); setSelections([]); }} style={pillBtn(country === c)}>{c}</button>
+            ))}
+          </div>
+        </>
+      )}
+
+      {sport && country && !isTennis && (
+        <>
+          <div style={{ fontSize: 12, color: "#8A8071", marginBottom: 6 }}>3. Niveau</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
+            {levels.map((l) => (
+              <button key={l} onClick={() => { setLevel(l); setSelections([]); }} style={pillBtn(level === l)}>{l}</button>
+            ))}
+          </div>
+        </>
+      )}
+
+      {pool.length > 0 && (isTennis || level) && (
+        <>
+          <div style={{ fontSize: 12, color: "#8A8071", marginBottom: 6 }}>{isTennis ? "2. Joueurs (plusieurs possibles)" : "4. Clubs (plusieurs possibles)"}</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
+            {pool.map((name) => (
+              <button key={name} onClick={() => toggleSelection(name)} style={pillBtn(selections.includes(name))}>{selections.includes(name) ? "✓ " : ""}{name}</button>
+            ))}
+          </div>
+        </>
+      )}
+
+      {selections.length > 0 && (
+        <>
+          <div style={{ fontSize: 12, color: "#8A8071", marginBottom: 6 }}>{isTennis ? "3." : "5."} Contenus à afficher (cumulables)</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 14 }}>
+            {SPORT_CONTENT_TYPES.map((c) => (
+              <button key={c.id} onClick={() => toggleContent(c.id)} style={pillBtn(contents[c.id])}>{contents[c.id] ? "✓ " : ""}{c.label}</button>
+            ))}
+          </div>
+          <button
+            onClick={save}
+            disabled={!Object.values(contents).some(Boolean)}
+            style={{ background: "var(--accent)", color: "#FBF8F3", border: "none", borderRadius: 10, padding: "9px 16px", fontWeight: 600, fontSize: 13, cursor: Object.values(contents).some(Boolean) ? "pointer" : "not-allowed", opacity: Object.values(contents).some(Boolean) ? 1 : 0.5 }}
+          >
+            Enregistrer
+          </button>
+        </>
+      )}
+    </Card>
+  );
+}
+
+// Widget "Programme TV" : chaînes choisies dans une liste, logos via Clearbit avec
+// repli sur un badge coloré si le logo ne charge pas, alertes par programme à
+// double confirmation pour la suppression (réutilise DeleteButton). Programmes fictifs.
+const TV_CHANNELS = [
+  { name: "TF1", domain: "tf1.fr" },
+  { name: "France 2", domain: "france.tv" },
+  { name: "France 3", domain: "france.tv" },
+  { name: "Canal+", domain: "canalplus.com" },
+  { name: "France 5", domain: "france.tv" },
+  { name: "M6", domain: "m6.fr" },
+  { name: "Arte", domain: "arte.tv" },
+  { name: "C8", domain: "c8.fr" },
+  { name: "W9", domain: "w9.fr" },
+  { name: "TMC", domain: "tmc.fr" },
+  { name: "BFM TV", domain: "bfmtv.com" },
+  { name: "CNews", domain: "cnews.fr" },
+  { name: "Gulli", domain: "gulli.fr" },
+  { name: "L'Équipe", domain: "lequipe.fr" },
+];
+const TV_PROGRAM_TEMPLATES = ["Journal", "Magazine découverte", "Film du soir", "Série phare", "Divertissement", "Documentaire", "Jeu télévisé", "Débat d'actualité"];
+function fakeSchedule(channel) {
+  const rand = seededRandom("tv:" + channel + ":" + todayISO());
+  return ["12:00", "13:00", "18:00", "20:10", "21:10", "22:50"].map((time) => ({ time, title: pickSeeded(rand, TV_PROGRAM_TEMPLATES, 1)[0] }));
+}
+function ChannelLogo({ channel }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) {
+    const rand = seededRandom(channel.name);
+    return (
+      <div style={{ width: 28, height: 28, borderRadius: 8, background: `hsl(${Math.floor(rand() * 360)}, 45%, 55%)`, color: "#fff", fontSize: 10, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+        {channel.name.slice(0, 2).toUpperCase()}
+      </div>
+    );
+  }
+  return <img src={`https://logo.clearbit.com/${channel.domain}`} alt="" onError={() => setFailed(true)} style={{ width: 28, height: 28, objectFit: "contain", borderRadius: 6, flexShrink: 0 }} />;
+}
+function TvWidget({ config, updateConfig }) {
+  const channels = config?.channels || [];
+  const alerts = config?.alerts || [];
+  const [configuring, setConfiguring] = useState(channels.length === 0);
+  const [selected, setSelected] = useState(channels);
+
+  const toggleChannel = (name) => setSelected((prev) => (prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name]));
+  const save = () => { updateConfig({ channels: selected, alerts }); setConfiguring(false); };
+  const removeAlert = (channel, program) => updateConfig({ channels, alerts: alerts.filter((a) => !(a.channel === channel && a.program === program)) });
+  const addAlert = (channel, program) => updateConfig({ channels, alerts: [...alerts, { channel, program }] });
+
+  if (configuring) {
+    return (
+      <Card>
+        <SectionLabel>Programme TV — configuration</SectionLabel>
+        <div style={{ fontSize: 12, color: "#8A8071", marginBottom: 10 }}>Choisissez les chaînes à afficher.</div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 14 }}>
+          {TV_CHANNELS.map((c) => (
+            <button key={c.name} onClick={() => toggleChannel(c.name)} style={pillBtn(selected.includes(c.name))}>{c.name}</button>
+          ))}
+        </div>
+        <button
+          onClick={save}
+          disabled={!selected.length}
+          style={{ background: "var(--accent)", color: "#FBF8F3", border: "none", borderRadius: 10, padding: "9px 16px", fontWeight: 600, fontSize: 13, cursor: selected.length ? "pointer" : "not-allowed", opacity: selected.length ? 1 : 0.5 }}
+        >
+          Enregistrer
+        </button>
+      </Card>
+    );
+  }
+
+  return (
+    <Card>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+        <SectionLabel>Programme TV</SectionLabel>
+        <button onClick={() => { setSelected(channels); setConfiguring(true); }} style={{ background: "none", border: "none", color: "var(--accent)", fontSize: 12, fontWeight: 600, cursor: "pointer", padding: 0 }}>Modifier</button>
+      </div>
+      <IllustrativeBanner>Programmes fictifs — aucune source de données TV réelle connectée.</IllustrativeBanner>
+      {channels.map((name) => {
+        const channel = TV_CHANNELS.find((c) => c.name === name) || { name, domain: "" };
+        const schedule = fakeSchedule(name);
+        return (
+          <div key={name} style={{ marginBottom: 12, paddingBottom: 10, borderBottom: "1px solid #EFE9DD" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+              <ChannelLogo channel={channel} />
+              <span style={{ fontSize: 14, fontWeight: 600, color: "#262138" }}>{name}</span>
+            </div>
+            {schedule.map((s) => {
+              const active = alerts.some((a) => a.channel === name && a.program === s.title);
+              return (
+                <div key={s.time} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#5C5346", padding: "3px 0" }}>
+                  <span className="mono" style={{ color: "#8A8071", width: 40 }}>{s.time}</span>
+                  <span style={{ flex: 1 }}>{s.title}</span>
+                  {active ? <DeleteButton onDelete={() => removeAlert(name, s.title)} label="l'alerte" /> : (
+                    <button onClick={() => addAlert(name, s.title)} style={{ background: "none", border: "none", color: "#C9BFA9", cursor: "pointer", padding: 4 }} aria-label="Activer une alerte"><Bell size={14} /></button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        );
+      })}
+    </Card>
+  );
+}
+
+// Widget "Actualités" : données réelles via le flux RSS Google News (gratuit, sans
+// clé), proxifié par api/news.js pour contourner le CORS. Catégorie "Local" utilise
+// la géolocalisation du navigateur pour chercher l'actualité de la ville détectée.
+const NEWS_CATEGORIES = [
+  { id: "une", label: "À la une" },
+  { id: "france", label: "France" },
+  { id: "monde", label: "Monde" },
+  { id: "sport", label: "Sport" },
+  { id: "eco", label: "Économie" },
+  { id: "tech", label: "Tech" },
+  { id: "local", label: "Local" },
+];
+function ActuWidget({ config, updateConfig }) {
+  const category = config?.category || "une";
+  const [items, setItems] = useState(null);
+  const [status, setStatus] = useState("loading");
+  const [placeName, setPlaceName] = useState("");
+
+  const load = async (cat) => {
+    setStatus("loading");
+    try {
+      let q = "";
+      if (cat === "local") {
+        if (!navigator.geolocation) { setStatus("error"); return; }
+        const pos = await new Promise((resolve, reject) => navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 8000 }));
+        const geoRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${pos.coords.latitude}&lon=${pos.coords.longitude}&zoom=10&accept-language=fr`);
+        const geoJson = await geoRes.json();
+        const a = geoJson.address || {};
+        q = a.city || a.town || a.village || a.municipality || a.county || "";
+        setPlaceName(q);
+        if (!q) { setStatus("error"); return; }
+      }
+      const res = await fetch(`/api/news?category=${encodeURIComponent(cat)}&q=${encodeURIComponent(q)}`);
+      if (!res.ok) throw new Error();
+      const json = await res.json();
+      setItems(json.items || []);
+      setStatus("ready");
+    } catch {
+      setStatus("error");
+    }
+  };
+
+  useEffect(() => { load(category); }, [category]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <Card>
+      <SectionLabel>Actualités</SectionLabel>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
+        {NEWS_CATEGORIES.map((c) => (
+          <button key={c.id} onClick={() => updateConfig({ category: c.id })} style={pillBtn(category === c.id)}>{c.label}</button>
+        ))}
+      </div>
+      {category === "local" && placeName && <div style={{ fontSize: 11, color: "#8A8071", marginBottom: 8 }}>Autour de {placeName}</div>}
+      {status === "loading" && <div style={{ fontSize: 13, color: "#8A8071" }}>Chargement…</div>}
+      {status === "error" && (
+        <div>
+          <div style={{ fontSize: 13, color: "#8A8071", marginBottom: 8 }}>Actualités indisponibles pour le moment.</div>
+          <button onClick={() => load(category)} style={ghostBtn}>Réessayer</button>
+        </div>
+      )}
+      {status === "ready" && items?.length === 0 && <div style={{ fontSize: 13, color: "#9C9384" }}>Aucun article trouvé.</div>}
+      {status === "ready" && items?.slice(0, 6).map((item, i, arr) => (
+        <a key={i} href={item.link} target="_blank" rel="noopener noreferrer" style={{ display: "block", padding: "8px 0", borderBottom: i < arr.length - 1 ? "1px solid #EFE9DD" : "none", textDecoration: "none" }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: "#262138", marginBottom: 2 }}>{item.title}</div>
+          <div style={{ fontSize: 11, color: "#8A8071" }}>{item.source}</div>
+        </a>
+      ))}
+    </Card>
+  );
+}
+
+// Widget "Bourses" : indices, valeurs fictives (aucune API boursière gratuite fiable trouvée).
+const STOCK_INDICES = { "CAC 40": 7500, "S&P 500": 5500, "Dow Jones": 39000, Nasdaq: 17500, "Euro Stoxx 50": 4900 };
+function fakeIndexValue(name, base) {
+  const rand = seededRandom("bourse:" + name + ":" + todayISO());
+  const variation = (rand() - 0.5) * 2.5;
+  return { value: base * (1 + variation / 100), variation };
+}
+function BourseWidget() {
+  return (
+    <Card>
+      <SectionLabel>Bourses</SectionLabel>
+      <IllustrativeBanner>Valeurs fictives — aucune API boursière gratuite fiable trouvée.</IllustrativeBanner>
+      {Object.entries(STOCK_INDICES).map(([name, base]) => {
+        const { value, variation } = fakeIndexValue(name, base);
+        const up = variation >= 0;
+        return (
+          <div key={name} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "7px 0", borderBottom: "1px solid #EFE9DD" }}>
+            <span style={{ fontSize: 13, fontWeight: 600, color: "#262138" }}>{name}</span>
+            <div style={{ textAlign: "right" }}>
+              <div className="mono" style={{ fontSize: 13, color: "#5C5346" }}>{value.toLocaleString("fr-FR", { maximumFractionDigits: 2 })}</div>
+              <div className="mono" style={{ fontSize: 11, color: up ? "#3E6E63" : "#B0455A" }}>{up ? "+" : ""}{variation.toFixed(2)}%</div>
+            </div>
+          </div>
+        );
+      })}
+    </Card>
+  );
+}
+
+// Widget "Horoscope" : texte généré, contenu ludique par nature (pas de vrai horoscope à récupérer).
+const ZODIAC_SIGNS = ["Bélier", "Taureau", "Gémeaux", "Cancer", "Lion", "Vierge", "Balance", "Scorpion", "Sagittaire", "Capricorne", "Verseau", "Poissons"];
+const HOROSCOPE_TEMPLATES = [
+  "Une belle énergie vous porte aujourd'hui, profitez-en pour avancer sur vos projets.",
+  "La journée invite à la patience — les choses se mettent en place plus lentement que prévu.",
+  "Les échanges avec vos proches sont particulièrement favorisés aujourd'hui.",
+  "Un imprévu pourrait chambouler votre organisation, restez flexible.",
+  "C'est le moment idéal pour prendre une décision que vous repoussiez.",
+  "Une bonne nouvelle pourrait égayer votre journée.",
+  "Prenez le temps de souffler, votre énergie a besoin de repos.",
+];
+function fakeHoroscope(sign) {
+  const rand = seededRandom("horo:" + sign + ":" + todayISO());
+  return pickSeeded(rand, HOROSCOPE_TEMPLATES, 1)[0];
+}
+function HoroscopeWidget({ config, updateConfig }) {
+  const sign = config?.sign;
+  if (!sign) {
+    return (
+      <Card>
+        <SectionLabel>Horoscope</SectionLabel>
+        <div style={{ fontSize: 12, color: "#8A8071", marginBottom: 10 }}>Choisissez votre signe.</div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+          {ZODIAC_SIGNS.map((s) => (
+            <button key={s} onClick={() => updateConfig({ sign: s })} style={pillBtn(false)}>{s}</button>
+          ))}
+        </div>
+      </Card>
+    );
+  }
+  return (
+    <Card>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+        <SectionLabel>Horoscope — {sign}</SectionLabel>
+        <button onClick={() => updateConfig({ sign: null })} style={{ background: "none", border: "none", color: "var(--accent)", fontSize: 12, fontWeight: 600, cursor: "pointer", padding: 0 }}>Changer</button>
+      </div>
+      <IllustrativeBanner>Contenu généré pour le plaisir — pas un véritable horoscope.</IllustrativeBanner>
+      <div style={{ fontSize: 14, color: "#5C5346", lineHeight: 1.5 }}>{fakeHoroscope(sign)}</div>
+    </Card>
+  );
+}
+
+const WIDGET_CATALOG = [
+  { type: "meteo", label: "Météo" },
+  { type: "sport", label: "Sport" },
+  { type: "sport-avance", label: "Sport (avancé)" },
+  { type: "tv", label: "Programme TV" },
+  { type: "actu", label: "Actualités" },
+  { type: "bourse", label: "Bourses" },
+  { type: "horoscope", label: "Horoscope" },
+];
+const WIDGET_LABELS = Object.fromEntries(WIDGET_CATALOG.map((w) => [w.type, w.label]));
+
 function Overview({ tasks, shopping, repas, activites, goTo, notify, username, householdId, favoriteClub, updateFavoriteClub, homeWidgets, updateHomeWidgets }) {
   const iso = todayISO();
   const dayName = todayDayName();
@@ -1703,46 +2178,81 @@ function Overview({ tasks, shopping, repas, activites, goTo, notify, username, h
     setNotifPromptVisible(false);
   };
 
-  const WIDGET_DEFS = {
-    meteo: { label: "Météo", render: () => <Meteo onData={setWeatherData} /> },
-    sport: { label: "Sport", render: () => <SportWidget favoriteClub={favoriteClub} updateFavoriteClub={updateFavoriteClub} /> },
-  };
+  const instances = migrateHomeWidgets(homeWidgets).instances;
   const [editingWidgets, setEditingWidgets] = useState(false);
-  const widgetOrder = (homeWidgets?.order || ["meteo", "sport"]).filter((id) => WIDGET_DEFS[id]);
-  const widgetSizes = homeWidgets?.sizes || {};
-  const toggleWidgetSize = (id) => {
-    const next = { ...widgetSizes, [id]: (widgetSizes[id] || "full") === "full" ? "half" : "full" };
-    updateHomeWidgets({ order: widgetOrder, sizes: next });
+  const [addingWidget, setAddingWidget] = useState(false);
+
+  const updateInstance = (id, patch) => updateHomeWidgets({ instances: instances.map((inst) => (inst.id === id ? { ...inst, ...patch } : inst)) });
+  const toggleInstanceSize = (id) => {
+    const inst = instances.find((i) => i.id === id);
+    updateInstance(id, { size: (inst?.size || "full") === "full" ? "half" : "full" });
   };
-  const reorderWidgets = (newOrder) => updateHomeWidgets({ order: newOrder, sizes: widgetSizes });
+  const removeInstance = (id) => updateHomeWidgets({ instances: instances.filter((i) => i.id !== id) });
+  const addInstance = (type) => {
+    updateHomeWidgets({ instances: [...instances, { id: newWidgetId(), type, size: "full", config: {} }] });
+    setAddingWidget(false);
+  };
+  const renderInstance = (inst) => {
+    const updateConfig = (config) => updateInstance(inst.id, { config });
+    switch (inst.type) {
+      case "meteo": return <Meteo onData={setWeatherData} />;
+      case "sport": return <SportWidget favoriteClub={favoriteClub} updateFavoriteClub={updateFavoriteClub} />;
+      case "sport-avance": return <SportAvanceWidget config={inst.config} updateConfig={updateConfig} />;
+      case "tv": return <TvWidget config={inst.config} updateConfig={updateConfig} />;
+      case "actu": return <ActuWidget config={inst.config} updateConfig={updateConfig} />;
+      case "bourse": return <BourseWidget />;
+      case "horoscope": return <HoroscopeWidget config={inst.config} updateConfig={updateConfig} />;
+      default: return null;
+    }
+  };
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+      <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 16, marginBottom: 8 }}>
+        {editingWidgets && (
+          <button onClick={() => setAddingWidget((v) => !v)} style={{ background: "none", border: "none", color: "var(--accent)", fontSize: 12, fontWeight: 600, cursor: "pointer", padding: 0 }}>
+            + Ajouter un widget
+          </button>
+        )}
         <button onClick={() => setEditingWidgets((v) => !v)} style={{ background: "none", border: "none", color: "var(--accent)", fontSize: 12, fontWeight: 600, cursor: "pointer", padding: 0 }}>
           {editingWidgets ? "✓ Terminé" : "✏️ Personnaliser"}
         </button>
       </div>
 
+      {addingWidget && (
+        <Card style={{ border: "1.5px solid var(--accent)" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+            <SectionLabel>Ajouter un widget</SectionLabel>
+            <button onClick={() => setAddingWidget(false)} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "flex" }}><X size={16} color="#8A8071" /></button>
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {WIDGET_CATALOG.map((w) => (
+              <button key={w.type} onClick={() => addInstance(w.type)} style={ghostBtn}>{w.label}</button>
+            ))}
+          </div>
+        </Card>
+      )}
+
       {editingWidgets ? (
         <Card>
           <div style={{ fontSize: 12, color: "#8A8071", marginBottom: 10 }}>
-            Appuyez sur ⠿ et glissez pour réorganiser. Choisissez la taille de chaque widget.
+            Appuyez sur ⠿ et glissez pour réorganiser. Choisissez la taille, ou supprimez un widget.
           </div>
           <DraggableNavList
-            items={widgetOrder.map((id) => ({ id }))}
-            onReorder={(reordered) => reorderWidgets(reordered.map((r) => r.id))}
-            renderItem={(item) => {
-              const size = widgetSizes[item.id] || "full";
+            items={instances}
+            onReorder={(reordered) => updateHomeWidgets({ instances: reordered })}
+            renderItem={(inst) => {
+              const size = inst.size || "full";
               return (
                 <>
-                  <span style={{ flex: 1, fontSize: 14 }}>{WIDGET_DEFS[item.id]?.label || item.id}</span>
+                  <span style={{ flex: 1, fontSize: 14 }}>{WIDGET_LABELS[inst.type] || inst.type}</span>
                   <button
-                    onClick={() => toggleWidgetSize(item.id)}
+                    onClick={() => toggleInstanceSize(inst.id)}
                     style={{ background: "none", border: "1px solid #E3DBCB", borderRadius: 8, padding: "4px 10px", fontSize: 12, color: "var(--accent)", cursor: "pointer" }}
                   >
                     {size === "full" ? "▭ Pleine" : "▤ Moitié"}
                   </button>
+                  <DeleteButton onDelete={() => removeInstance(inst.id)} label="ce widget" />
                 </>
               );
             }}
@@ -1750,9 +2260,9 @@ function Overview({ tasks, shopping, repas, activites, goTo, notify, username, h
         </Card>
       ) : (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginBottom: 4 }}>
-          {widgetOrder.map((id) => (
-            <div key={id} style={{ flex: (widgetSizes[id] || "full") === "half" ? "1 1 calc(50% - 6px)" : "1 1 100%", minWidth: 150 }}>
-              {WIDGET_DEFS[id].render()}
+          {instances.map((inst) => (
+            <div key={inst.id} style={{ flex: (inst.size || "full") === "half" ? "1 1 calc(50% - 6px)" : "1 1 100%", minWidth: 150 }}>
+              {renderInstance(inst)}
             </div>
           ))}
         </div>
