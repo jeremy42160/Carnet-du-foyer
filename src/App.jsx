@@ -1032,6 +1032,12 @@ function WidgetGrid({ instances, editing, renderContent, renderControls, onReord
   return (
     <div onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerLeave={handlePointerUp} style={{ display: "flex", flexWrap: "wrap", gap: 12, marginBottom: 4 }}>
       {orderedInstances.map((inst) => {
+        // Un widget dont le contenu est vide (ex. "Prévu demain" sans rien de prévu)
+        // ne doit occuper aucune place ni participer au glisser-déposer : sinon il
+        // laisse un emplacement invisible mais bien réel dans la grille, qui casse
+        // l'alignement des voisins et fausse la détection de survol pendant un glisser.
+        const content = renderContent(inst);
+        if (content == null) return null;
         const isDragged = inst.id === draggedId;
         return (
           <div
@@ -1050,7 +1056,7 @@ function WidgetGrid({ instances, editing, renderContent, renderControls, onReord
               transition: isDragged ? "none" : "transform 0.15s ease",
             }}
           >
-            {renderContent(inst)}
+            {content}
             {editing && renderControls(inst, { onPointerDown: (e) => handlePointerDown(e, inst.id) })}
           </div>
         );
@@ -1507,11 +1513,30 @@ function newWidgetId() {
 // Ancien format à un seul widget par type ({ order, sizes }) -> nouveau format à
 // instances multiples ({ instances: [{ id, type, size, config }] }), qui permet
 // plusieurs widgets du même type avec leur propre configuration.
+// Widgets "cœur" : autrefois des blocs fixes de la page Aujourd'hui (résumé du
+// jour, statistiques, récapitulatif), désormais des widgets comme les autres —
+// déplaçables, redimensionnables, supprimables. Injectés une seule fois (les
+// comptes existants ne les avaient pas encore) grâce au drapeau `coreInjected`,
+// pour ne pas les faire réapparaître après qu'un utilisateur les a supprimés.
+const CORE_WIDGET_TYPES = ["resume-jour", "resume-demain", "stat-taches", "stat-courses", "recap"];
+
 function migrateHomeWidgets(raw) {
-  if (raw && Array.isArray(raw.instances)) return raw;
-  const order = raw?.order && Array.isArray(raw.order) ? raw.order : ["meteo", "sport"];
-  const sizes = raw?.sizes || {};
-  return { instances: order.map((type) => ({ id: type, type, size: sizes[type] || "full", config: {} })) };
+  let instances;
+  if (raw && Array.isArray(raw.instances)) {
+    instances = raw.instances;
+  } else {
+    const order = raw?.order && Array.isArray(raw.order) ? raw.order : ["meteo", "sport"];
+    const sizes = raw?.sizes || {};
+    instances = order.map((type) => ({ id: type, type, size: sizes[type] || "full", config: {} }));
+  }
+  if (!raw?.coreInjected) {
+    const existingTypes = new Set(instances.map((i) => i.type));
+    const missing = CORE_WIDGET_TYPES.filter((t) => !existingTypes.has(t));
+    if (missing.length) {
+      instances = [...instances, ...missing.map((type) => ({ id: type, type, size: type.startsWith("stat-") ? "half" : "full", config: {} }))];
+    }
+  }
+  return { instances, coreInjected: true };
 }
 
 // Générateur pseudo-aléatoire déterministe (seedé par une chaîne) : utilisé pour les
@@ -2219,6 +2244,11 @@ function HoroscopeWidget({ config, updateConfig }) {
 }
 
 const WIDGET_CATALOG = [
+  { type: "resume-jour", label: "Résumé du jour" },
+  { type: "resume-demain", label: "Résumé de demain" },
+  { type: "stat-taches", label: "Tâches en cours" },
+  { type: "stat-courses", label: "Liste de courses" },
+  { type: "recap", label: "Récapitulatif" },
   { type: "meteo", label: "Météo" },
   { type: "sport", label: "Sport" },
   { type: "sport-avance", label: "Sport (avancé)" },
@@ -2290,19 +2320,142 @@ function Overview({ tasks, shopping, repas, activites, goTo, notify, username, h
   const [editingWidgets, setEditingWidgets] = useState(false);
   const [addingWidget, setAddingWidget] = useState(false);
 
-  const updateInstance = (id, patch) => updateHomeWidgets({ instances: instances.map((inst) => (inst.id === id ? { ...inst, ...patch } : inst)) });
+  const updateInstance = (id, patch) => updateHomeWidgets({ instances: instances.map((inst) => (inst.id === id ? { ...inst, ...patch } : inst)), coreInjected: true });
   const toggleInstanceSize = (id) => {
     const inst = instances.find((i) => i.id === id);
     updateInstance(id, { size: (inst?.size || "full") === "full" ? "half" : "full" });
   };
-  const removeInstance = (id) => updateHomeWidgets({ instances: instances.filter((i) => i.id !== id) });
+  const removeInstance = (id) => updateHomeWidgets({ instances: instances.filter((i) => i.id !== id), coreInjected: true });
   const addInstance = (type) => {
-    updateHomeWidgets({ instances: [...instances, { id: newWidgetId(), type, size: "full", config: {} }] });
+    updateHomeWidgets({ instances: [...instances, { id: newWidgetId(), type, size: type.startsWith("stat-") ? "half" : "full", config: {} }], coreInjected: true });
     setAddingWidget(false);
   };
   const renderInstance = (inst) => {
     const updateConfig = (config) => updateInstance(inst.id, { config });
     switch (inst.type) {
+      case "resume-jour": return (
+        <Card style={{ border: "1.5px solid var(--accent)" }}>
+          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 14 }}>
+            <span className="display" style={{ fontStyle: "italic", fontSize: 22, color: "#262138" }}>{dayName}</span>
+            <span style={{ fontSize: 13, color: "#8A8071" }}>{new Date().toLocaleDateString("fr-FR", { day: "numeric", month: "long" })}</span>
+          </div>
+          {!hasDayInfo ? (
+            <div style={{ fontSize: 14, color: "#9C9384" }}>Rien de prévu aujourd'hui.</div>
+          ) : (
+            <div>
+              {dayActs.length > 0 && (
+                <div style={{ marginBottom: 12 }}>
+                  <SectionLabel>Activités</SectionLabel>
+                  {dayActs.map((a) => (
+                    <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "5px 0" }}>
+                      <span style={{ fontSize: 15 }}>{a.icon}</span>
+                      <span className="mono" style={{ fontSize: 12, color: "#8A8071", width: 76 }}>{a.time}–{a.endTime || "?"}</span>
+                      <span style={{ width: 8, height: 8, borderRadius: 4, background: colorFor(a.child) }} />
+                      <span style={{ fontSize: 14 }}>{a.activity} — {a.child}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {dayRepas.length > 0 && (
+                <div style={{ marginBottom: 12 }}>
+                  <SectionLabel>Repas</SectionLabel>
+                  {dayRepas.map((r) => (
+                    <div key={r.id} style={{ fontSize: 14, padding: "5px 0", color: "#5C5346" }}><strong>{r.meal}</strong> — {repasSummary(r)}</div>
+                  ))}
+                </div>
+              )}
+              {dayTasks.length > 0 && (
+                <div>
+                  <SectionLabel>Tâches du jour</SectionLabel>
+                  {dayTasks.map((t) => (
+                    t.isWork ? (
+                      <div key={t.id} style={{ fontSize: 14, padding: "5px 0", display: "flex", alignItems: "center", gap: 8 }}>
+                        <span>{t.icon}</span> <strong>{t.assignee}</strong>
+                        <span style={{ color: "#8A8071", fontSize: 12 }}>{t.isRest ? "— Repos" : `— Travail ${t.time}–${t.endTime}`}</span>
+                      </div>
+                    ) : t.isFriend ? (
+                      <div key={t.id} style={{ fontSize: 14, padding: "5px 0", display: "flex", alignItems: "center", gap: 8 }}>
+                        <span>👥</span> <strong>{t.friendName}</strong>
+                        <span style={{ color: "#8A8071", fontSize: 12 }}>— {t.moment}{t.arrivalTime && ` · arrivée ${t.arrivalTime}`}</span>
+                      </div>
+                    ) : (
+                      <div key={t.id} style={{ fontSize: 14, padding: "5px 0", textDecoration: t.done ? "line-through" : "none", color: t.done ? "#9C9384" : "#5C5346" }}>✓ {t.text} <span style={{ color: "#8A8071", fontSize: 12 }}>({t.assignee})</span></div>
+                    )
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </Card>
+      );
+      case "resume-demain": return !hasTomorrowInfo ? null : (
+        <Card>
+          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span className="display" style={{ fontStyle: "italic", fontSize: 18, color: "#262138" }}>Prévu demain — {tomorrowDayName}</span>
+              {tomorrowForecast && (
+                <span style={{ display: "flex", alignItems: "center", gap: 4, background: "#F1ECE2", borderRadius: 20, padding: "2px 8px", fontSize: 12 }}>
+                  {weatherIcon(tomorrowForecast.code)} <span className="mono" style={{ fontWeight: 600 }}>{Math.round(tomorrowForecast.temp)}°</span>
+                </span>
+              )}
+            </div>
+            <span style={{ fontSize: 13, color: "#8A8071" }}>{tomorrowDate.toLocaleDateString("fr-FR", { day: "numeric", month: "long" })}</span>
+          </div>
+          {tomorrowActs.length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <SectionLabel>Activités</SectionLabel>
+              {tomorrowActs.map((a) => (
+                <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "5px 0" }}>
+                  <span style={{ fontSize: 15 }}>{a.icon}</span>
+                  <span className="mono" style={{ fontSize: 12, color: "#8A8071", width: 76 }}>{a.time}–{a.endTime || "?"}</span>
+                  <span style={{ width: 8, height: 8, borderRadius: 4, background: colorFor(a.child) }} />
+                  <span style={{ fontSize: 14 }}>{a.activity} — {a.child}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {tomorrowRepas.length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <SectionLabel>Repas</SectionLabel>
+              {tomorrowRepas.map((r) => (
+                <div key={r.id} style={{ fontSize: 14, padding: "5px 0", color: "#5C5346" }}><strong>{r.meal}</strong> — {repasSummary(r)}</div>
+              ))}
+            </div>
+          )}
+          {tomorrowTasks.length > 0 && (
+            <div>
+              <SectionLabel>Tâches</SectionLabel>
+              {tomorrowTasks.map((t) => (
+                t.isWork ? (
+                  <div key={t.id} style={{ fontSize: 14, padding: "5px 0", display: "flex", alignItems: "center", gap: 8 }}>
+                    <span>{t.icon}</span> <strong>{t.assignee}</strong>
+                    <span style={{ color: "#8A8071", fontSize: 12 }}>{t.isRest ? "— Repos" : `— Travail ${t.time}–${t.endTime}`}</span>
+                  </div>
+                ) : t.isFriend ? (
+                  <div key={t.id} style={{ fontSize: 14, padding: "5px 0", display: "flex", alignItems: "center", gap: 8 }}>
+                    <span>👥</span> <strong>{t.friendName}</strong>
+                    <span style={{ color: "#8A8071", fontSize: 12 }}>— {t.moment}{t.arrivalTime && ` · arrivée ${t.arrivalTime}`}</span>
+                  </div>
+                ) : (
+                  <div key={t.id} style={{ fontSize: 14, padding: "5px 0", textDecoration: t.done ? "line-through" : "none", color: t.done ? "#9C9384" : "#5C5346" }}>✓ {t.text} <span style={{ color: "#8A8071", fontSize: 12 }}>({t.assignee})</span></div>
+                )
+              ))}
+            </div>
+          )}
+        </Card>
+      );
+      case "stat-taches": return <StatCard label="Tâches en cours" value={pendingTasks.length} onClick={() => goTo("taches")} icon={CheckSquare} />;
+      case "stat-courses": return <StatCard label="Liste de courses" value={pendingShopping.length} onClick={() => goTo("courses")} icon={ShoppingCart} />;
+      case "recap": return undatedPending.length > 0 ? (
+        <Card>
+          <SectionLabel>Sans date précise</SectionLabel>
+          {undatedPending.slice(0, 3).map((t) => (
+            <div key={t.id} style={{ fontSize: 15, padding: "6px 0", borderBottom: "1px solid #EFE9DD" }}>✓ {t.text} <span style={{ color: "#8A8071", fontSize: 13 }}>({t.assignee})</span></div>
+          ))}
+        </Card>
+      ) : (
+        !hasDayInfo && <Card><div className="display" style={{ fontStyle: "italic", fontSize: 17, color: "var(--accent)" }}>Tout est à jour. Bonne journée à vous tous.</div></Card>
+      );
       case "meteo": return <Meteo onData={setWeatherData} />;
       case "sport": return <SportWidget favoriteClub={favoriteClub} updateFavoriteClub={updateFavoriteClub} />;
       case "sport-avance": return <SportAvanceWidget config={inst.config} updateConfig={updateConfig} />;
@@ -2364,7 +2517,7 @@ function Overview({ tasks, shopping, repas, activites, goTo, notify, username, h
         editing={editingWidgets}
         renderContent={renderInstance}
         renderControls={renderWidgetControls}
-        onReorder={(reordered) => updateHomeWidgets({ instances: reordered })}
+        onReorder={(reordered) => updateHomeWidgets({ instances: reordered, coreInjected: true })}
       />
 
       {notifPromptVisible && (
@@ -2390,132 +2543,6 @@ function Overview({ tasks, shopping, repas, activites, goTo, notify, username, h
         </Card>
       )}
 
-      <Card style={{ border: "1.5px solid var(--accent)" }}>
-        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 14 }}>
-          <span className="display" style={{ fontStyle: "italic", fontSize: 22, color: "#262138" }}>{dayName}</span>
-          <span style={{ fontSize: 13, color: "#8A8071" }}>{new Date().toLocaleDateString("fr-FR", { day: "numeric", month: "long" })}</span>
-        </div>
-        {!hasDayInfo ? (
-          <div style={{ fontSize: 14, color: "#9C9384" }}>Rien de prévu aujourd'hui.</div>
-        ) : (
-          <div>
-            {dayActs.length > 0 && (
-              <div style={{ marginBottom: 12 }}>
-                <SectionLabel>Activités</SectionLabel>
-                {dayActs.map((a) => (
-                  <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "5px 0" }}>
-                    <span style={{ fontSize: 15 }}>{a.icon}</span>
-                    <span className="mono" style={{ fontSize: 12, color: "#8A8071", width: 76 }}>{a.time}–{a.endTime || "?"}</span>
-                    <span style={{ width: 8, height: 8, borderRadius: 4, background: colorFor(a.child) }} />
-                    <span style={{ fontSize: 14 }}>{a.activity} — {a.child}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-            {dayRepas.length > 0 && (
-              <div style={{ marginBottom: 12 }}>
-                <SectionLabel>Repas</SectionLabel>
-                {dayRepas.map((r) => (
-                  <div key={r.id} style={{ fontSize: 14, padding: "5px 0", color: "#5C5346" }}><strong>{r.meal}</strong> — {repasSummary(r)}</div>
-                ))}
-              </div>
-            )}
-            {dayTasks.length > 0 && (
-              <div>
-                <SectionLabel>Tâches du jour</SectionLabel>
-                {dayTasks.map((t) => (
-                  t.isWork ? (
-                    <div key={t.id} style={{ fontSize: 14, padding: "5px 0", display: "flex", alignItems: "center", gap: 8 }}>
-                      <span>{t.icon}</span> <strong>{t.assignee}</strong>
-                      <span style={{ color: "#8A8071", fontSize: 12 }}>{t.isRest ? "— Repos" : `— Travail ${t.time}–${t.endTime}`}</span>
-                    </div>
-                  ) : t.isFriend ? (
-                    <div key={t.id} style={{ fontSize: 14, padding: "5px 0", display: "flex", alignItems: "center", gap: 8 }}>
-                      <span>👥</span> <strong>{t.friendName}</strong>
-                      <span style={{ color: "#8A8071", fontSize: 12 }}>— {t.moment}{t.arrivalTime && ` · arrivée ${t.arrivalTime}`}</span>
-                    </div>
-                  ) : (
-                    <div key={t.id} style={{ fontSize: 14, padding: "5px 0", textDecoration: t.done ? "line-through" : "none", color: t.done ? "#9C9384" : "#5C5346" }}>✓ {t.text} <span style={{ color: "#8A8071", fontSize: 12 }}>({t.assignee})</span></div>
-                  )
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-      </Card>
-
-      {hasTomorrowInfo && (
-        <Card>
-          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 14 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span className="display" style={{ fontStyle: "italic", fontSize: 18, color: "#262138" }}>Prévu demain — {tomorrowDayName}</span>
-              {tomorrowForecast && (
-                <span style={{ display: "flex", alignItems: "center", gap: 4, background: "#F1ECE2", borderRadius: 20, padding: "2px 8px", fontSize: 12 }}>
-                  {weatherIcon(tomorrowForecast.code)} <span className="mono" style={{ fontWeight: 600 }}>{Math.round(tomorrowForecast.temp)}°</span>
-                </span>
-              )}
-            </div>
-            <span style={{ fontSize: 13, color: "#8A8071" }}>{tomorrowDate.toLocaleDateString("fr-FR", { day: "numeric", month: "long" })}</span>
-          </div>
-          {tomorrowActs.length > 0 && (
-            <div style={{ marginBottom: 12 }}>
-              <SectionLabel>Activités</SectionLabel>
-              {tomorrowActs.map((a) => (
-                <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "5px 0" }}>
-                  <span style={{ fontSize: 15 }}>{a.icon}</span>
-                  <span className="mono" style={{ fontSize: 12, color: "#8A8071", width: 76 }}>{a.time}–{a.endTime || "?"}</span>
-                  <span style={{ width: 8, height: 8, borderRadius: 4, background: colorFor(a.child) }} />
-                  <span style={{ fontSize: 14 }}>{a.activity} — {a.child}</span>
-                </div>
-              ))}
-            </div>
-          )}
-          {tomorrowRepas.length > 0 && (
-            <div style={{ marginBottom: 12 }}>
-              <SectionLabel>Repas</SectionLabel>
-              {tomorrowRepas.map((r) => (
-                <div key={r.id} style={{ fontSize: 14, padding: "5px 0", color: "#5C5346" }}><strong>{r.meal}</strong> — {repasSummary(r)}</div>
-              ))}
-            </div>
-          )}
-          {tomorrowTasks.length > 0 && (
-            <div>
-              <SectionLabel>Tâches</SectionLabel>
-              {tomorrowTasks.map((t) => (
-                t.isWork ? (
-                  <div key={t.id} style={{ fontSize: 14, padding: "5px 0", display: "flex", alignItems: "center", gap: 8 }}>
-                    <span>{t.icon}</span> <strong>{t.assignee}</strong>
-                    <span style={{ color: "#8A8071", fontSize: 12 }}>{t.isRest ? "— Repos" : `— Travail ${t.time}–${t.endTime}`}</span>
-                  </div>
-                ) : t.isFriend ? (
-                  <div key={t.id} style={{ fontSize: 14, padding: "5px 0", display: "flex", alignItems: "center", gap: 8 }}>
-                    <span>👥</span> <strong>{t.friendName}</strong>
-                    <span style={{ color: "#8A8071", fontSize: 12 }}>— {t.moment}{t.arrivalTime && ` · arrivée ${t.arrivalTime}`}</span>
-                  </div>
-                ) : (
-                  <div key={t.id} style={{ fontSize: 14, padding: "5px 0", textDecoration: t.done ? "line-through" : "none", color: t.done ? "#9C9384" : "#5C5346" }}>✓ {t.text} <span style={{ color: "#8A8071", fontSize: 12 }}>({t.assignee})</span></div>
-                )
-              ))}
-            </div>
-          )}
-        </Card>
-      )}
-
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 4 }}>
-        <StatCard label="Tâches en cours" value={pendingTasks.length} onClick={() => goTo("taches")} icon={CheckSquare} />
-        <StatCard label="Liste de courses" value={pendingShopping.length} onClick={() => goTo("courses")} icon={ShoppingCart} />
-      </div>
-
-      {undatedPending.length > 0 ? (
-        <Card>
-          <SectionLabel>Sans date précise</SectionLabel>
-          {undatedPending.slice(0, 3).map((t) => (
-            <div key={t.id} style={{ fontSize: 15, padding: "6px 0", borderBottom: "1px solid #EFE9DD" }}>✓ {t.text} <span style={{ color: "#8A8071", fontSize: 13 }}>({t.assignee})</span></div>
-          ))}
-        </Card>
-      ) : (
-        !hasDayInfo && <Card><div className="display" style={{ fontStyle: "italic", fontSize: 17, color: "var(--accent)" }}>Tout est à jour. Bonne journée à vous tous.</div></Card>
-      )}
     </div>
   );
 }
