@@ -2038,18 +2038,18 @@ const SPORT_DATA = {
         levels: {
           "Ligue 1": [
             "Paris SG", "OM", "OL", "AS Monaco", "LOSC", "Stade Rennais", "OGC Nice", "RC Lens",
-            "RC Strasbourg", "Stade Brestois", "Toulouse FC", "Montpellier HSC", "FC Nantes",
-            "Le Havre AC", "AJ Auxerre", "Angers SCO", "FC Metz", "Stade de Reims",
+            "RC Strasbourg", "Stade Brestois", "Toulouse FC", "Paris FC", "FC Lorient",
+            "Le Havre AC", "AJ Auxerre", "Angers SCO", "ESTAC Troyes", "Le Mans FC",
           ],
           "Ligue 2": [
-            "FC Lorient", "Paris FC", "Grenoble Foot 38", "ESTAC Troyes", "Amiens SC", "Clermont Foot",
-            "Pau FC", "Rodez AF", "US Boulogne", "FC Annecy", "Red Star FC", "FC Martigues",
-            "USL Dunkerque", "EA Guingamp", "Stade Lavallois", "SC Bastia", "AC Ajaccio", "Stade Malherbe Caen",
+            "FC Annecy", "US Boulogne", "Clermont Foot", "Dijon FCO", "USL Dunkerque", "Grenoble Foot 38",
+            "EA Guingamp", "Stade Lavallois", "FC Metz", "Montpellier HSC", "AS Nancy Lorraine", "FC Nantes",
+            "Pau FC", "Red Star FC", "Stade de Reims", "Rodez AF", "AS Saint-Étienne", "FC Sochaux-Montbéliard",
           ],
           "National": [
-            "US Concarneau", "Le Mans FC", "SO Cholet", "FC Villefranche Beaujolais", "AS Nancy Lorraine",
-            "US Avranches", "Stade Poitevin", "CS Sedan Ardennes", "Jura Sud Foot", "FC Bourg-Péronnas",
-            "US Louhans-Cuiseaux", "FC Chambly Oise", "Stade Briochin", "GOAL FC",
+            "US Concarneau", "SO Cholet", "FC Villefranche Beaujolais", "US Avranches", "Stade Poitevin",
+            "CS Sedan Ardennes", "Jura Sud Foot", "FC Bourg-Péronnas", "US Louhans-Cuiseaux",
+            "FC Chambly Oise", "Stade Briochin", "GOAL FC",
           ],
         },
       },
@@ -2057,8 +2057,8 @@ const SPORT_DATA = {
         levels: {
           "Premier League": [
             "Man City", "Liverpool", "Arsenal", "Chelsea", "Man United", "Tottenham", "Newcastle United",
-            "Aston Villa", "Brighton", "West Ham", "Crystal Palace", "Fulham", "Wolves", "Everton",
-            "Brentford", "Nottingham Forest", "Bournemouth", "Leicester City", "Ipswich Town", "Southampton",
+            "Aston Villa", "Brighton", "Crystal Palace", "Fulham", "Everton", "Brentford", "Nottingham Forest",
+            "Bournemouth", "Coventry City", "Ipswich Town", "Hull City", "Leeds United", "Sunderland",
           ],
         },
       },
@@ -2066,9 +2066,9 @@ const SPORT_DATA = {
         levels: {
           "La Liga": [
             "Real Madrid", "FC Barcelone", "Atlético Madrid", "Séville FC", "Real Sociedad", "Real Betis",
-            "Villarreal", "Athletic Bilbao", "Valence CF", "Girona FC", "Celta Vigo", "Osasuna",
-            "Rayo Vallecano", "Getafe", "RCD Majorque", "Las Palmas", "Deportivo Alavés", "Espanyol",
-            "CD Leganés", "Real Valladolid",
+            "Villarreal", "Athletic Bilbao", "Valence CF", "Celta Vigo", "Osasuna", "Rayo Vallecano",
+            "Getafe", "Deportivo Alavés", "Espanyol", "Elche CF", "Levante UD", "RC Deportivo La Corogne",
+            "Racing Santander", "Málaga CF",
           ],
         },
       },
@@ -2076,8 +2076,8 @@ const SPORT_DATA = {
         levels: {
           "Serie A": [
             "Juventus", "AC Milan", "Inter Milan", "AS Roma", "Napoli", "Atalanta", "Lazio", "Fiorentina",
-            "Bologne", "Torino", "Udinese", "Sassuolo", "Genoa", "Cagliari", "Empoli", "Hellas Vérone",
-            "Lecce", "Parme", "Côme 1907", "Venise FC",
+            "Bologne", "Torino", "Udinese", "Sassuolo", "Genoa", "Cagliari",
+            "Lecce", "Parme", "Côme 1907", "Venise FC", "Frosinone", "Monza",
           ],
         },
       },
@@ -2088,9 +2088,9 @@ const SPORT_DATA = {
       France: {
         levels: {
           "Betclic Élite": [
-            "ASVEL", "Paris Basketball", "AS Monaco", "Le Mans", "Cholet Basket", "Nanterre 92",
+            "ASVEL", "Paris Basketball", "Le Mans", "Cholet Basket", "Nanterre 92",
             "Élan Chalon", "JL Bourg", "SIG Strasbourg", "Limoges CSP", "JDA Dijon", "Boulazac Basket Dordogne",
-            "Saint-Quentin BB", "Fos Provence Basket", "Chorale Roanne", "SLUC Nancy", "BCM Gravelines-Dunkerque", "ADA Blois",
+            "Saint-Quentin BB", "Chorale Roanne", "SLUC Nancy", "BCM Gravelines-Dunkerque", "Pau-Lacq-Orthez",
           ],
         },
       },
@@ -2113,7 +2113,7 @@ const SPORT_DATA = {
           "Top 14": [
             "Stade Toulousain", "Racing 92", "Stade Rochelais", "UBB", "Stade Français", "RC Toulon",
             "ASM Clermont Auvergne", "Castres Olympique", "Section Paloise", "Montpellier Hérault Rugby",
-            "Aviron Bayonnais", "USA Perpignan", "Lyon OU", "Stade Montois",
+            "Aviron Bayonnais", "USA Perpignan", "Lyon OU", "RC Vannes",
           ],
         },
       },
@@ -2124,10 +2124,10 @@ const SPORT_DATA = {
       France: {
         levels: {
           "Starligue": [
-            "PSG Handball", "Montpellier HB", "HBC Nantes", "Chambéry Savoie", "Saint-Raphaël VHB",
-            "Cesson-Rennes MHB", "Nîmes Handball", "USDK Dunkerque", "US Ivry Handball", "C' Chartres Métropole",
-            "Aix HB Provence", "US Créteil Handball", "Istres Provence Handball", "Tremblay-en-France Handball",
-            "Billère Handball Pau", "Pontault-Combault Handball",
+            "PSG Handball", "HBC Nantes", "Montpellier HB", "Limoges Handball", "Chambéry Savoie",
+            "Saint-Raphaël VHB", "Tremblay-en-France Handball", "Fenix Toulouse Handball", "Provence Aix UC Handball",
+            "Cesson-Rennes MHB", "USAM Nîmes Gard", "Sélestat Alsace Handball", "USDK Dunkerque",
+            "C' Chartres Métropole", "Saran Loiret Handball", "Caen Handball",
           ],
         },
       },
@@ -2138,9 +2138,9 @@ const SPORT_DATA = {
       France: {
         levels: {
           "Ligue A": [
-            "Paris Volley", "Tours VB", "AS Cannes Volley-Ball", "Chaumont VB 52", "Montpellier UC Volley",
-            "Rennes Volley 35", "Narbonne Volley", "Nantes Rezé Métropole Volley", "Toulouse Spacer's Volley",
-            "GFC Ajaccio Volley", "Sète Volley", "Plessis-Robinson Volley 92",
+            "Montpellier HSC Volley", "Paris Volley", "Tours VB", "Tourcoing-Lille Métropole", "Poitiers Volley",
+            "Royan Atlantique VB", "AS Cannes Volley-Ball", "Chaumont VB 52", "Narbonne Volley",
+            "Nantes Rezé Métropole Volley", "GFC Ajaccio Volley", "Sète Volley",
           ],
         },
       },
