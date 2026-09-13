@@ -1966,9 +1966,9 @@ function searchUrl(query) {
 // échoue à cause du CORS, voir ce fichier). Renvoie null si indisponible
 // (nom introuvable sur cette source, ou en développement local où les
 // fonctions api/* de Vercel ne sont pas servies par `npm run dev`).
-async function fetchRealSportData(name, country) {
+async function fetchRealSportData(name, country, sport) {
   try {
-    const res = await fetch(`/api/sports?name=${encodeURIComponent(name)}&country=${encodeURIComponent(country || "")}`);
+    const res = await fetch(`/api/sports?name=${encodeURIComponent(name)}&country=${encodeURIComponent(country || "")}&sport=${encodeURIComponent(sport || "")}`);
     if (!res.ok) return null;
     const json = await res.json();
     if (!json.found) return null;
@@ -2015,11 +2015,11 @@ function SportContentBlock({ name, contents, opponentPool = [], sport, country, 
     let cancelled = false;
     setReal(undefined);
     (async () => {
-      const data = await fetchRealSportData(name, country);
+      const data = await fetchRealSportData(name, country, sport);
       if (!cancelled) setReal(data && data.results ? data : null);
     })();
     return () => { cancelled = true; };
-  }, [name, country, individual, contents.resultats]);
+  }, [name, country, sport, individual, contents.resultats]);
 
   const resultsAreReal = !individual && real && real.results;
   const rankToShow = resultsAreReal && real.rank ? real.rank : fakeRank(name);
