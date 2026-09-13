@@ -1749,20 +1749,49 @@ function SearchableEntityList({ items, isSelected, onSelect, placeholder }) {
 
 // Sélecteur en cascade sport → pays → niveau → club (ou directement sportif
 // pour les sports individuels), sélection unique, avec saisie manuelle possible
-// à la dernière étape si le nom voulu n'est pas dans la liste. Partagé par le
-// widget "Sport" (sélection unique) et sert de base au widget "Sport avancé".
+// à la dernière étape si le nom voulu n'est pas dans la liste — puis, une fois
+// le club/sportif choisi, ce qu'on veut suivre pour lui (mêmes catégories que
+// le widget "Sport avancé", voir SPORT_CONTENT_TYPES). Sert de base au widget
+// "Sport" (sélection unique).
 function SportPicker({ onPick }) {
   const [sport, setSport] = useState(null);
   const [country, setCountry] = useState(null);
   const [level, setLevel] = useState(null);
   const [manualName, setManualName] = useState("");
+  const [pickedName, setPickedName] = useState(null);
+  const [contents, setContents] = useState({ actualite: true, resultats: true, transferts: false });
 
   const isIndividual = sport && !!SPORT_DATA[sport]?.players;
   const countries = sport && !isIndividual ? Object.keys(SPORT_DATA[sport].countries) : [];
   const levels = sport && country && !isIndividual ? Object.keys(SPORT_DATA[sport].countries[country].levels) : [];
   const pool = isIndividual ? SPORT_DATA[sport].players : sport && country && level ? SPORT_DATA[sport].countries[country].levels[level] : [];
 
-  const pick = (name) => onPick({ sport, individual: isIndividual, country: isIndividual ? null : country, level: isIndividual ? null : level, name });
+  const toggleContent = (id) => setContents((prev) => ({ ...prev, [id]: !prev[id] }));
+  const finish = () => onPick({ sport, individual: isIndividual, country: isIndividual ? null : country, level: isIndividual ? null : level, name: pickedName, contents });
+
+  if (pickedName) {
+    return (
+      <div>
+        <div style={{ fontSize: 15, fontWeight: 600, color: "#262138", marginBottom: 14 }}>{pickedName}</div>
+        <div style={{ fontSize: 12, color: "#8A8071", marginBottom: 6 }}>Que voulez-vous afficher ? (plusieurs choix possibles)</div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16 }}>
+          {SPORT_CONTENT_TYPES.map((c) => (
+            <button key={c.id} onClick={() => toggleContent(c.id)} style={pillBtn(contents[c.id])}>{contents[c.id] ? "✓ " : ""}{c.label}</button>
+          ))}
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={() => setPickedName(null)} style={ghostBtn}>Retour</button>
+          <button
+            onClick={finish}
+            disabled={!Object.values(contents).some(Boolean)}
+            style={{ flex: 1, background: "var(--accent)", color: "#FBF8F3", border: "none", borderRadius: 10, fontWeight: 600, fontSize: 13, cursor: Object.values(contents).some(Boolean) ? "pointer" : "not-allowed", opacity: Object.values(contents).some(Boolean) ? 1 : 0.5 }}
+          >
+            Enregistrer
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -1802,7 +1831,7 @@ function SportPicker({ onPick }) {
             <SearchableEntityList
               items={pool}
               isSelected={() => false}
-              onSelect={pick}
+              onSelect={setPickedName}
               placeholder={isIndividual ? "Rechercher un sportif…" : "Rechercher un club…"}
             />
           </div>
@@ -1811,12 +1840,12 @@ function SportPicker({ onPick }) {
             <input
               value={manualName}
               onChange={(e) => setManualName(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && manualName.trim() && pick(manualName.trim())}
+              onKeyDown={(e) => e.key === "Enter" && manualName.trim() && setPickedName(manualName.trim())}
               placeholder={isIndividual ? "Nom du sportif…" : "Nom du club…"}
               style={{ flex: 1, minWidth: 0, padding: "9px 10px", borderRadius: 10, border: "1px solid #E3DBCB", fontSize: 13 }}
             />
             <button
-              onClick={() => manualName.trim() && pick(manualName.trim())}
+              onClick={() => manualName.trim() && setPickedName(manualName.trim())}
               disabled={!manualName.trim()}
               style={{ background: "var(--accent)", color: "#FBF8F3", border: "none", borderRadius: 10, padding: "0 14px", fontWeight: 600, fontSize: 13, cursor: manualName.trim() ? "pointer" : "not-allowed", opacity: manualName.trim() ? 1 : 0.6, flexShrink: 0 }}
             >
@@ -1829,92 +1858,16 @@ function SportPicker({ onPick }) {
   );
 }
 
-// Les surnoms courts affichés dans le sélecteur (plus familiers) ne correspondent
-// pas toujours au nom officiel attendu par la recherche TheSportsDB (ex. "OM"
-// remonte l'équipe nationale d'Oman plutôt qu'Olympique de Marseille) — cet alias
-// ne sert qu'à la requête de recherche, jamais à l'affichage.
-const TEAM_SEARCH_ALIASES = {
-  "OM": "Olympique de Marseille",
-  "OL": "Olympique Lyonnais",
-  "LOSC": "LOSC Lille",
-  "PSG Handball": "Paris Saint-Germain Handball",
-};
-
-// Interroge TheSportsDB (API gratuite) pour retrouver un club ou un sportif par
-// son nom, afin d'afficher de vraies données (prochain match, dernier résultat)
-// plutôt que d'inventer un contenu pour un nom choisi dans la liste ou tapé
-// manuellement. Si rien n'est trouvé, le widget l'indique honnêtement.
-async function resolveSportEntity({ individual, name }) {
-  try {
-    if (individual) {
-      const res = await fetch(`https://www.thesportsdb.com/api/v1/json/3/searchplayers.php?p=${encodeURIComponent(name)}`);
-      const json = await res.json();
-      const player = json.player?.[0];
-      if (!player) return null;
-      return { id: player.idPlayer, name: player.strPlayer, badge: player.strThumb || player.strCutout || null };
-    }
-    const searchName = TEAM_SEARCH_ALIASES[name] || name;
-    const res = await fetch(`https://www.thesportsdb.com/api/v1/json/3/searchteams.php?t=${encodeURIComponent(searchName)}`);
-    const json = await res.json();
-    const team = json.teams?.[0];
-    if (!team) return null;
-    // On garde le nom d'affichage choisi par l'utilisateur (le surnom familier),
-    // seul l'id/le badge viennent de la correspondance API.
-    return { id: team.idTeam, name, badge: team.strTeamBadge || null };
-  } catch {
-    return null;
-  }
-}
-
 // Widget "Sport" : suit un seul club ou sportif favori, choisi via un assistant
-// en popup (bouton ⚙️), affiche le prochain match et le dernier résultat quand
-// TheSportsDB (API gratuite) reconnaît le nom choisi.
+// en popup (bouton ⚙️), avec le même contenu (Actualité/Résultats/Transferts,
+// voir SportContentBlock) que le widget "Sport avancé", pour un seul favori.
 function SportWidget({ favoriteClub, updateFavoriteClub }) {
   const [pickerOpen, setPickerOpen] = useState(!favoriteClub);
-  const [resolving, setResolving] = useState(false);
-  const [nextEvent, setNextEvent] = useState(null);
-  const [lastEvent, setLastEvent] = useState(null);
-  const [loadingEvents, setLoadingEvents] = useState(false);
 
-  const handlePick = async (selection) => {
-    setResolving(true);
-    const resolved = await resolveSportEntity(selection);
-    updateFavoriteClub({
-      sport: selection.sport,
-      individual: selection.individual,
-      country: selection.country,
-      level: selection.level,
-      name: resolved?.name || selection.name,
-      id: resolved?.id || null,
-      badge: resolved?.badge || null,
-    });
-    setResolving(false);
+  const handlePick = (selection) => {
+    updateFavoriteClub(selection);
     setPickerOpen(false);
   };
-
-  useEffect(() => {
-    if (!favoriteClub?.id || favoriteClub.individual) {
-      setNextEvent(null);
-      setLastEvent(null);
-      return;
-    }
-    setLoadingEvents(true);
-    (async () => {
-      try {
-        const [nextRes, lastRes] = await Promise.all([
-          fetch(`https://www.thesportsdb.com/api/v1/json/3/eventsnext.php?id=${favoriteClub.id}`),
-          fetch(`https://www.thesportsdb.com/api/v1/json/3/eventslast.php?id=${favoriteClub.id}`),
-        ]);
-        const nextJson = await nextRes.json();
-        const lastJson = await lastRes.json();
-        setNextEvent(nextJson.events?.[0] || null);
-        setLastEvent(lastJson.results?.[0] || null);
-      } catch {
-        // Silencieux : le widget affiche juste "indisponible" ci-dessous s'il n'y a rien.
-      }
-      setLoadingEvents(false);
-    })();
-  }, [favoriteClub?.id, favoriteClub?.individual]);
 
   return (
     <Card>
@@ -1929,47 +1882,18 @@ function SportWidget({ favoriteClub, updateFavoriteClub }) {
         <div style={{ fontSize: 13, color: "#8A8071" }}>Configurez ce widget pour suivre un club ou un sportif.</div>
       ) : (
         <>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-            {favoriteClub.badge && <img src={favoriteClub.badge} alt="" style={{ width: 34, height: 34, objectFit: "contain", borderRadius: favoriteClub.individual ? 17 : 0 }} />}
-            <div>
-              <div style={{ fontSize: 15, fontWeight: 600, color: "#262138" }}>{favoriteClub.name}</div>
-              <div style={{ fontSize: 11, color: "#8A8071" }}>{favoriteClub.sport}{favoriteClub.level ? ` · ${favoriteClub.level}` : ""}</div>
-            </div>
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 15, fontWeight: 600, color: "#262138" }}>{favoriteClub.name}</div>
+            <div style={{ fontSize: 11, color: "#8A8071" }}>{favoriteClub.sport}{favoriteClub.level ? ` · ${favoriteClub.level}` : ""}</div>
           </div>
-          {!favoriteClub.id ? (
-            <div style={{ fontSize: 12, color: "#9C9384" }}>Données indisponibles pour ce nom sur notre source.</div>
-          ) : favoriteClub.individual ? (
-            <div style={{ fontSize: 12, color: "#9C9384" }}>Calendrier non disponible pour les sportifs individuels.</div>
-          ) : loadingEvents ? (
-            <div style={{ fontSize: 13, color: "#8A8071" }}>Chargement…</div>
-          ) : (
-            <>
-              {nextEvent ? (
-                <div style={{ fontSize: 13, color: "#5C5346", marginBottom: 8 }}>
-                  <span style={{ color: "#8A8071" }}>Prochain match — </span>
-                  {nextEvent.strHomeTeam} vs {nextEvent.strAwayTeam}
-                  <div style={{ fontSize: 11, color: "#8A8071" }}>
-                    {new Date(nextEvent.dateEvent).toLocaleDateString("fr-FR", { day: "numeric", month: "long" })}
-                    {nextEvent.strTime && ` à ${nextEvent.strTime.slice(0, 5)}`}
-                  </div>
-                </div>
-              ) : (
-                <div style={{ fontSize: 12, color: "#9C9384", marginBottom: 8 }}>Aucun match à venir programmé.</div>
-              )}
-              {lastEvent && (
-                <div style={{ fontSize: 13, color: "#5C5346" }}>
-                  <span style={{ color: "#8A8071" }}>Dernier résultat — </span>
-                  {lastEvent.strHomeTeam} {lastEvent.intHomeScore} – {lastEvent.intAwayScore} {lastEvent.strAwayTeam}
-                </div>
-              )}
-            </>
-          )}
+          <IllustrativeBanner>Contenu illustratif — aucune API sportive fiable et gratuite trouvée pour ces données.</IllustrativeBanner>
+          <SportContentBlock name={favoriteClub.name} contents={favoriteClub.contents || {}} />
         </>
       )}
 
       {pickerOpen && (
         <Modal title="Configurer le widget Sport" onClose={() => favoriteClub && setPickerOpen(false)}>
-          {resolving ? <div style={{ fontSize: 13, color: "#8A8071" }}>Recherche en cours…</div> : <SportPicker onPick={handlePick} />}
+          <SportPicker onPick={handlePick} />
         </Modal>
       )}
     </Card>
@@ -2026,6 +1950,30 @@ const TRANSFER_DONE_TEMPLATES = [
 function fakeTransfer(name) {
   const rand = seededRandom("transfert:" + name + ":" + todayISO());
   return pickSeeded(rand, [...TRANSFER_RUMOR_TEMPLATES, ...TRANSFER_DONE_TEMPLATES], 1)[0].replace("{name}", name);
+}
+
+// Bloc de contenu partagé entre le widget "Sport" (un seul favori) et "Sport
+// avancé" (plusieurs) : affiche les catégories cochées (voir SPORT_CONTENT_TYPES,
+// plus bas) pour un nom de club/sportif donné.
+function SportContentBlock({ name, contents }) {
+  return (
+    <>
+      {contents.actualite && <div style={{ fontSize: 13, color: "#5C5346", marginBottom: 8 }}><span style={{ color: "#8A8071" }}>Actu — </span>{fakeNews(name)}</div>}
+      {contents.resultats && (
+        <div style={{ marginBottom: 8 }}>
+          <div style={{ fontSize: 13, color: "#5C5346", marginBottom: 4 }}><span style={{ color: "#8A8071" }}>Classement — </span>{fakeRank(name)}e</div>
+          <div style={{ fontSize: 12, color: "#8A8071", marginBottom: 2 }}>5 derniers résultats</div>
+          {fakeLastResults(name).map((r, i) => (
+            <div key={i} style={{ fontSize: 13, color: "#5C5346", padding: "2px 0" }}>
+              {name} {r.scoreFor} – {r.scoreAgainst} {r.opponent}
+              <span style={{ color: "#9C9384", fontSize: 11 }}> · {r.date.toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {contents.transferts && <div style={{ fontSize: 13, color: "#5C5346" }}><span style={{ color: "#8A8071" }}>Transferts — </span>{fakeTransfer(name)}</div>}
+    </>
+  );
 }
 
 // Widget "Sport avancé" : assistant en cascade sport → pays → niveau → clubs
@@ -2229,20 +2177,7 @@ function SportAvanceWidget({ config, updateConfig }) {
         {config.selections.map((name) => (
           <div key={name} style={{ paddingTop: 10, marginTop: 10, borderTop: "1px solid #EFE9DD" }}>
             <div style={{ fontSize: 14, fontWeight: 600, color: "#262138", marginBottom: 6 }}>{name}</div>
-            {config.contents.actualite && <div style={{ fontSize: 13, color: "#5C5346", marginBottom: 8 }}><span style={{ color: "#8A8071" }}>Actu — </span>{fakeNews(name)}</div>}
-            {config.contents.resultats && (
-              <div style={{ marginBottom: 8 }}>
-                <div style={{ fontSize: 13, color: "#5C5346", marginBottom: 4 }}><span style={{ color: "#8A8071" }}>Classement — </span>{fakeRank(name)}e</div>
-                <div style={{ fontSize: 12, color: "#8A8071", marginBottom: 2 }}>5 derniers résultats</div>
-                {fakeLastResults(name).map((r, i) => (
-                  <div key={i} style={{ fontSize: 13, color: "#5C5346", padding: "2px 0" }}>
-                    {name} {r.scoreFor} – {r.scoreAgainst} {r.opponent}
-                    <span style={{ color: "#9C9384", fontSize: 11 }}> · {r.date.toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-            {config.contents.transferts && <div style={{ fontSize: 13, color: "#5C5346" }}><span style={{ color: "#8A8071" }}>Transferts — </span>{fakeTransfer(name)}</div>}
+            <SportContentBlock name={name} contents={config.contents} />
           </div>
         ))}
       </Card>
