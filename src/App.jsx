@@ -1886,10 +1886,14 @@ function SportWidget({ favoriteClub, updateFavoriteClub }) {
             <div style={{ fontSize: 15, fontWeight: 600, color: "#262138" }}>{favoriteClub.name}</div>
             <div style={{ fontSize: 11, color: "#8A8071" }}>{favoriteClub.sport}{favoriteClub.level ? ` · ${favoriteClub.level}` : ""}</div>
           </div>
-          <IllustrativeBanner>Contenu illustratif, cliquez une ligne pour vérifier la vraie information — aucune API sportive fiable et gratuite trouvée pour ces données.</IllustrativeBanner>
+          <IllustrativeBanner>Classement/résultats réels quand disponibles (TheSportsDB) ; actualité et transferts restent illustratifs — cliquez une ligne pour vérifier.</IllustrativeBanner>
           <SportContentBlock
             name={favoriteClub.name}
             contents={favoriteClub.contents || {}}
+            sport={favoriteClub.sport}
+            country={favoriteClub.country}
+            level={favoriteClub.level}
+            individual={favoriteClub.individual}
             opponentPool={
               favoriteClub.individual
                 ? SPORT_DATA[favoriteClub.sport]?.players || []
@@ -1953,6 +1957,26 @@ function fakeLastResults(name, opponentPool = [], n = 5) {
 function searchUrl(query) {
   return `https://www.google.com/search?q=${encodeURIComponent(query)}`;
 }
+
+// Récupère un vrai classement + de vrais derniers résultats via api/sports.js
+// (proxy serverless vers TheSportsDB — un fetch direct depuis le navigateur
+// échoue à cause du CORS, voir ce fichier). Renvoie null si indisponible
+// (nom introuvable sur cette source, ou en développement local où les
+// fonctions api/* de Vercel ne sont pas servies par `npm run dev`).
+async function fetchRealSportData(name, country) {
+  try {
+    const res = await fetch(`/api/sports?name=${encodeURIComponent(name)}&country=${encodeURIComponent(country || "")}`);
+    if (!res.ok) return null;
+    const json = await res.json();
+    if (!json.found) return null;
+    return {
+      rank: json.rank ?? null,
+      results: json.results ? json.results.map((r) => ({ ...r, date: new Date(r.date) })) : null,
+    };
+  } catch {
+    return null;
+  }
+}
 // Mélange rumeurs (non confirmées) et transferts présentés comme finalisés,
 // comme demandé — toujours illustratif, jamais présenté comme une vraie source.
 const TRANSFER_RUMOR_TEMPLATES = [
@@ -1974,13 +1998,31 @@ function fakeTransfer(name) {
 const contentLinkStyle = { display: "block", color: "inherit", textDecoration: "none" };
 
 // Bloc de contenu partagé entre le widget "Sport" (un seul favori) et "Sport
-// avancé" (plusieurs) : affiche les catégories cochées (voir SPORT_CONTENT_TYPES,
-// plus bas) pour un nom de club/sportif donné. `opponentPool` (les autres clubs/
-// sportifs du même niveau) sert à générer des adversaires réels plutôt que des
-// noms génériques. Chaque ligne est cliquable vers une recherche externe, pour
-// pouvoir vérifier ou approfondir la vraie information derrière ce contenu
-// illustratif (voir IllustrativeBanner à l'appel).
-function SportContentBlock({ name, contents, opponentPool = [] }) {
+// avancé" (plusieurs). Le classement et les 5 derniers résultats sont de
+// vraies données (TheSportsDB) quand le club est un sport collectif reconnu ;
+// sinon (sport individuel, ou nom introuvable sur cette source) on retombe sur
+// un contenu illustratif clairement annoté "estimation". Actualité et
+// Transferts restent illustratifs dans tous les cas (aucune source gratuite
+// fiable trouvée). Chaque ligne est cliquable vers une recherche externe.
+function SportContentBlock({ name, contents, opponentPool = [], sport, country, level, individual }) {
+  const [real, setReal] = useState(undefined); // undefined = pas encore chargé, null = indisponible
+
+  useEffect(() => {
+    if (individual || !contents.resultats) return;
+    let cancelled = false;
+    setReal(undefined);
+    (async () => {
+      const data = await fetchRealSportData(name, country);
+      if (!cancelled) setReal(data && data.results ? data : null);
+    })();
+    return () => { cancelled = true; };
+  }, [name, country, individual, contents.resultats]);
+
+  const resultsAreReal = !individual && real && real.results;
+  const rankToShow = resultsAreReal && real.rank ? real.rank : fakeRank(name);
+  const resultsToShow = resultsAreReal ? real.results : fakeLastResults(name, opponentPool);
+  const resultsLoading = !individual && contents.resultats && real === undefined;
+
   return (
     <>
       {contents.actualite && (
@@ -1990,18 +2032,26 @@ function SportContentBlock({ name, contents, opponentPool = [] }) {
       )}
       {contents.resultats && (
         <div style={{ marginBottom: 8 }}>
-          <a href={searchUrl(`${name} classement`)} target="_blank" rel="noopener noreferrer" style={contentLinkStyle}>
-            <div style={{ fontSize: 13, color: "#5C5346", marginBottom: 4 }}><span style={{ color: "#8A8071" }}>Classement — </span>{fakeRank(name)}e</div>
-          </a>
-          <div style={{ fontSize: 12, color: "#8A8071", marginBottom: 2 }}>5 derniers résultats</div>
-          {fakeLastResults(name, opponentPool).map((r, i) => (
-            <a key={i} href={searchUrl(`${name} vs ${r.opponent}`)} target="_blank" rel="noopener noreferrer" style={contentLinkStyle}>
-              <div style={{ fontSize: 13, color: "#5C5346", padding: "2px 0" }}>
-                {name} {r.scoreFor} – {r.scoreAgainst} {r.opponent}
-                <span style={{ color: "#9C9384", fontSize: 11 }}> · {r.date.toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}</span>
-              </div>
-            </a>
-          ))}
+          {resultsLoading ? (
+            <div style={{ fontSize: 12, color: "#8A8071" }}>Recherche des vrais résultats…</div>
+          ) : (
+            <>
+              <a href={searchUrl(`${name} classement`)} target="_blank" rel="noopener noreferrer" style={contentLinkStyle}>
+                <div style={{ fontSize: 13, color: "#5C5346", marginBottom: 4 }}>
+                  <span style={{ color: "#8A8071" }}>Classement — </span>{rankToShow}e{!resultsAreReal || !real.rank ? " (estimation)" : ""}
+                </div>
+              </a>
+              <div style={{ fontSize: 12, color: "#8A8071", marginBottom: 2 }}>5 derniers résultats{!resultsAreReal && " (estimation)"}</div>
+              {resultsToShow.map((r, i) => (
+                <a key={i} href={searchUrl(`${name} vs ${r.opponent}`)} target="_blank" rel="noopener noreferrer" style={contentLinkStyle}>
+                  <div style={{ fontSize: 13, color: "#5C5346", padding: "2px 0" }}>
+                    {name} {r.scoreFor} – {r.scoreAgainst} {r.opponent}
+                    <span style={{ color: "#9C9384", fontSize: 11 }}> · {r.date.toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}</span>
+                  </div>
+                </a>
+              ))}
+            </>
+          )}
         </div>
       )}
       {contents.transferts && (
@@ -2210,11 +2260,19 @@ function SportAvanceWidget({ config, updateConfig }) {
           <SectionLabel>Sport — {config.sport}</SectionLabel>
           <button onClick={() => setEditing(true)} style={{ background: "none", border: "none", color: "var(--accent)", fontSize: 12, fontWeight: 600, cursor: "pointer", padding: 0 }}>Modifier</button>
         </div>
-        <IllustrativeBanner>Contenu illustratif, cliquez une ligne pour vérifier la vraie information — aucune API sportive fiable et gratuite trouvée pour toutes les compétitions.</IllustrativeBanner>
+        <IllustrativeBanner>Classement/résultats réels quand disponibles (TheSportsDB) ; actualité et transferts restent illustratifs — cliquez une ligne pour vérifier.</IllustrativeBanner>
         {config.selections.map((name) => (
           <div key={name} style={{ paddingTop: 10, marginTop: 10, borderTop: "1px solid #EFE9DD" }}>
             <div style={{ fontSize: 14, fontWeight: 600, color: "#262138", marginBottom: 6 }}>{name}</div>
-            <SportContentBlock name={name} contents={config.contents} opponentPool={pool} />
+            <SportContentBlock
+              name={name}
+              contents={config.contents}
+              opponentPool={pool}
+              sport={config.sport}
+              country={config.country}
+              level={config.level}
+              individual={isIndividual}
+            />
           </div>
         ))}
       </Card>
