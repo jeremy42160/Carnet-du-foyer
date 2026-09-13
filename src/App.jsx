@@ -1707,6 +1707,46 @@ function Meteo({ onData }) {
   );
 }
 
+// Liste recherchable (barre de recherche + liste défilante), utilisée pour
+// choisir un club ou un sportif dans une liste potentiellement longue — plus
+// lisible qu'un mur de boutons qui s'enroule sur lui-même.
+function SearchableEntityList({ items, isSelected, onSelect, placeholder }) {
+  const [query, setQuery] = useState("");
+  const q = query.trim().toLowerCase();
+  const filtered = q ? items.filter((name) => name.toLowerCase().includes(q)) : items;
+
+  return (
+    <div>
+      <input
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder={placeholder}
+        style={{ width: "100%", boxSizing: "border-box", padding: "9px 12px", borderRadius: 10, border: "1px solid #E3DBCB", fontSize: 13, marginBottom: 8 }}
+      />
+      <div style={{ maxHeight: 220, overflowY: "auto", border: "1px solid #EFE9DD", borderRadius: 10 }}>
+        {filtered.length === 0 && <div style={{ padding: "10px 12px", fontSize: 13, color: "#9C9384" }}>Aucun résultat.</div>}
+        {filtered.map((name) => {
+          const selected = isSelected(name);
+          return (
+            <button
+              key={name}
+              onClick={() => onSelect(name)}
+              style={{
+                display: "block", width: "100%", boxSizing: "border-box", padding: "9px 12px",
+                background: selected ? "color-mix(in srgb, var(--accent) 12%, white)" : "none",
+                border: "none", borderBottom: "1px solid #EFE9DD", cursor: "pointer", textAlign: "left",
+                fontSize: 13, fontWeight: selected ? 600 : 500, color: selected ? "var(--accent)" : "#5C5346",
+              }}
+            >
+              {selected ? "✓ " : ""}{name}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // Sélecteur en cascade sport → pays → niveau → club (ou directement sportif
 // pour les sports individuels), sélection unique, avec saisie manuelle possible
 // à la dernière étape si le nom voulu n'est pas dans la liste. Partagé par le
@@ -1758,10 +1798,13 @@ function SportPicker({ onPick }) {
       {sport && (isIndividual || level) && (
         <>
           <div style={{ fontSize: 12, color: "#8A8071", marginBottom: 6 }}>{isIndividual ? "2. Sportif" : "4. Club"}</div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
-            {pool.map((name) => (
-              <button key={name} onClick={() => pick(name)} style={pillBtn(false)}>{name}</button>
-            ))}
+          <div style={{ marginBottom: 12 }}>
+            <SearchableEntityList
+              items={pool}
+              isSelected={() => false}
+              onSelect={pick}
+              placeholder={isIndividual ? "Rechercher un sportif…" : "Rechercher un club…"}
+            />
           </div>
           <div style={{ fontSize: 12, color: "#8A8071", marginBottom: 6 }}>Pas dans la liste ?</div>
           <div style={{ display: "flex", gap: 8 }}>
@@ -1967,15 +2010,22 @@ function fakeLastResults(name, n = 5) {
   }
   return results;
 }
-const TRANSFER_TEMPLATES = [
-  "Un intérêt pour un jeune talent est évoqué du côté de {name}.",
-  "{name} serait à l'écoute d'offres pour l'un de ses joueurs cadres.",
-  "Une prolongation de contrat serait en discussion en interne chez {name}.",
-  "Un prêt hivernal est envisagé par le staff de {name}.",
+// Mélange rumeurs (non confirmées) et transferts présentés comme finalisés,
+// comme demandé — toujours illustratif, jamais présenté comme une vraie source.
+const TRANSFER_RUMOR_TEMPLATES = [
+  "Rumeur : un intérêt pour un jeune talent est évoqué du côté de {name}.",
+  "Rumeur : {name} serait à l'écoute d'offres pour l'un de ses joueurs cadres.",
+  "Rumeur : une prolongation de contrat serait en discussion en interne chez {name}.",
+  "Rumeur : un prêt hivernal est envisagé par le staff de {name}.",
+];
+const TRANSFER_DONE_TEMPLATES = [
+  "Officiel : {name} annonce l'arrivée d'un nouveau joueur cet été.",
+  "Officiel : un joueur formé au club quitte {name} pour un nouveau défi.",
+  "Officiel : {name} confirme la signature d'un renfort pour la ligne arrière.",
 ];
 function fakeTransfer(name) {
   const rand = seededRandom("transfert:" + name + ":" + todayISO());
-  return pickSeeded(rand, TRANSFER_TEMPLATES, 1)[0].replace("{name}", name);
+  return pickSeeded(rand, [...TRANSFER_RUMOR_TEMPLATES, ...TRANSFER_DONE_TEMPLATES], 1)[0].replace("{name}", name);
 }
 
 // Widget "Sport avancé" : assistant en cascade sport → pays → niveau → clubs
@@ -1995,6 +2045,11 @@ const SPORT_DATA = {
             "FC Lorient", "Paris FC", "Grenoble Foot 38", "ESTAC Troyes", "Amiens SC", "Clermont Foot",
             "Pau FC", "Rodez AF", "US Boulogne", "FC Annecy", "Red Star FC", "FC Martigues",
             "USL Dunkerque", "EA Guingamp", "Stade Lavallois", "SC Bastia", "AC Ajaccio", "Stade Malherbe Caen",
+          ],
+          "National": [
+            "US Concarneau", "Le Mans FC", "SO Cholet", "FC Villefranche Beaujolais", "AS Nancy Lorraine",
+            "US Avranches", "Stade Poitevin", "CS Sedan Ardennes", "Jura Sud Foot", "FC Bourg-Péronnas",
+            "US Louhans-Cuiseaux", "FC Chambly Oise", "Stade Briochin", "GOAL FC",
           ],
         },
       },
@@ -2136,7 +2191,7 @@ const SPORT_TYPES = Object.keys(SPORT_DATA);
 const SPORT_CONTENT_TYPES = [
   { id: "actualite", label: "Actualité" },
   { id: "resultats", label: "Résultats" },
-  { id: "transferts", label: "Transferts" },
+  { id: "transferts", label: "Transferts (rumeurs et derniers transferts)" },
 ];
 function pillBtn(active) {
   return { padding: "6px 12px", borderRadius: 20, border: active ? "1.5px solid var(--accent)" : "1px solid #E3DBCB", background: active ? "color-mix(in srgb, var(--accent) 12%, white)" : "none", color: active ? "var(--accent)" : "#5C5346", fontSize: 13, fontWeight: 600, cursor: "pointer" };
@@ -2231,10 +2286,13 @@ function SportAvanceWidget({ config, updateConfig }) {
       {pool.length > 0 && (isIndividual || level) && (
         <>
           <div style={{ fontSize: 12, color: "#8A8071", marginBottom: 6 }}>{isIndividual ? "2. Sportifs (plusieurs possibles)" : "4. Clubs (plusieurs possibles)"}</div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
-            {pool.map((name) => (
-              <button key={name} onClick={() => toggleSelection(name)} style={pillBtn(selections.includes(name))}>{selections.includes(name) ? "✓ " : ""}{name}</button>
-            ))}
+          <div style={{ marginBottom: 12 }}>
+            <SearchableEntityList
+              items={pool}
+              isSelected={(name) => selections.includes(name)}
+              onSelect={toggleSelection}
+              placeholder={isIndividual ? "Rechercher un sportif…" : "Rechercher un club…"}
+            />
           </div>
         </>
       )}
