@@ -1946,21 +1946,36 @@ function fakeNews(name) {
   const rand = seededRandom("news:" + name + ":" + todayISO());
   return pickSeeded(rand, NEWS_TEMPLATES, 1)[0].replace("{name}", name);
 }
-function fakeForm(name) {
-  const rand = seededRandom("forme:" + name);
-  return Array.from({ length: 5 }, () => pickSeeded(rand, ["V", "N", "D"], 1)[0]).join(" ");
-}
 function fakeRank(name, max = 20) {
   const rand = seededRandom("rank:" + name);
   return 1 + Math.floor(rand() * max);
 }
-function fakeFixture(name) {
-  const rand = seededRandom("fixture:" + name);
-  const opponents = ["FC Rival", "AS Adversaire", "Union Sportive", "Racing Club", "Olympique Voisin"];
-  const opp = pickSeeded(rand, opponents, 1)[0];
-  const d = new Date();
-  d.setDate(d.getDate() + 2 + Math.floor(rand() * 10));
-  return { opponent: opp, date: d };
+// 5 derniers résultats (adversaire, score, date passée), du plus récent au plus ancien.
+function fakeLastResults(name, n = 5) {
+  const rand = seededRandom("resultats:" + name);
+  const opponents = ["FC Rival", "AS Adversaire", "Union Sportive", "Racing Club", "Olympique Voisin", "Stade Concurrent", "US Challenger"];
+  const results = [];
+  let daysAgo = 3;
+  for (let i = 0; i < n; i++) {
+    const opponent = pickSeeded(rand, opponents, 1)[0];
+    const scoreFor = Math.floor(rand() * 4);
+    const scoreAgainst = Math.floor(rand() * 4);
+    const d = new Date();
+    d.setDate(d.getDate() - daysAgo);
+    results.push({ opponent, scoreFor, scoreAgainst, date: d });
+    daysAgo += 4 + Math.floor(rand() * 4);
+  }
+  return results;
+}
+const TRANSFER_TEMPLATES = [
+  "Un intérêt pour un jeune talent est évoqué du côté de {name}.",
+  "{name} serait à l'écoute d'offres pour l'un de ses joueurs cadres.",
+  "Une prolongation de contrat serait en discussion en interne chez {name}.",
+  "Un prêt hivernal est envisagé par le staff de {name}.",
+];
+function fakeTransfer(name) {
+  const rand = seededRandom("transfert:" + name + ":" + todayISO());
+  return pickSeeded(rand, TRANSFER_TEMPLATES, 1)[0].replace("{name}", name);
 }
 
 // Widget "Sport avancé" : assistant en cascade sport → pays → niveau → clubs
@@ -1969,31 +1984,111 @@ function fakeFixture(name) {
 const SPORT_DATA = {
   Football: {
     countries: {
-      France: { levels: { "Ligue 1": ["Paris SG", "OM", "OL", "AS Monaco", "LOSC", "Stade Rennais"], "Ligue 2": ["FC Metz", "AJ Auxerre", "Grenoble Foot", "USL Dunkerque"] } },
-      Angleterre: { levels: { "Premier League": ["Man City", "Liverpool", "Arsenal", "Chelsea", "Man United", "Tottenham"] } },
-      Espagne: { levels: { "La Liga": ["Real Madrid", "FC Barcelone", "Atlético Madrid", "Séville FC"] } },
-      Italie: { levels: { "Serie A": ["Juventus", "AC Milan", "Inter Milan", "AS Roma"] } },
+      France: {
+        levels: {
+          "Ligue 1": [
+            "Paris SG", "OM", "OL", "AS Monaco", "LOSC", "Stade Rennais", "OGC Nice", "RC Lens",
+            "RC Strasbourg", "Stade Brestois", "Toulouse FC", "Montpellier HSC", "FC Nantes",
+            "Le Havre AC", "AJ Auxerre", "Angers SCO", "FC Metz", "Stade de Reims",
+          ],
+          "Ligue 2": [
+            "FC Lorient", "Paris FC", "Grenoble Foot 38", "ESTAC Troyes", "Amiens SC", "Clermont Foot",
+            "Pau FC", "Rodez AF", "US Boulogne", "FC Annecy", "Red Star FC", "FC Martigues",
+            "USL Dunkerque", "EA Guingamp", "Stade Lavallois", "SC Bastia", "AC Ajaccio", "Stade Malherbe Caen",
+          ],
+        },
+      },
+      Angleterre: {
+        levels: {
+          "Premier League": [
+            "Man City", "Liverpool", "Arsenal", "Chelsea", "Man United", "Tottenham", "Newcastle United",
+            "Aston Villa", "Brighton", "West Ham", "Crystal Palace", "Fulham", "Wolves", "Everton",
+            "Brentford", "Nottingham Forest", "Bournemouth", "Leicester City", "Ipswich Town", "Southampton",
+          ],
+        },
+      },
+      Espagne: {
+        levels: {
+          "La Liga": [
+            "Real Madrid", "FC Barcelone", "Atlético Madrid", "Séville FC", "Real Sociedad", "Real Betis",
+            "Villarreal", "Athletic Bilbao", "Valence CF", "Girona FC", "Celta Vigo", "Osasuna",
+            "Rayo Vallecano", "Getafe", "RCD Majorque", "Las Palmas", "Deportivo Alavés", "Espanyol",
+            "CD Leganés", "Real Valladolid",
+          ],
+        },
+      },
+      Italie: {
+        levels: {
+          "Serie A": [
+            "Juventus", "AC Milan", "Inter Milan", "AS Roma", "Napoli", "Atalanta", "Lazio", "Fiorentina",
+            "Bologne", "Torino", "Udinese", "Sassuolo", "Genoa", "Cagliari", "Empoli", "Hellas Vérone",
+            "Lecce", "Parme", "Côme 1907", "Venise FC",
+          ],
+        },
+      },
     },
   },
   Basketball: {
     countries: {
-      France: { levels: { "Betclic Élite": ["ASVEL", "Paris Basketball", "AS Monaco", "Le Mans"] } },
-      "États-Unis": { levels: { NBA: ["Lakers", "Celtics", "Warriors", "Bucks", "Nuggets"] } },
+      France: {
+        levels: {
+          "Betclic Élite": [
+            "ASVEL", "Paris Basketball", "AS Monaco", "Le Mans", "Cholet Basket", "Nanterre 92",
+            "Élan Chalon", "JL Bourg", "SIG Strasbourg", "Limoges CSP", "JDA Dijon", "Boulazac Basket Dordogne",
+            "Saint-Quentin BB", "Fos Provence Basket", "Chorale Roanne", "SLUC Nancy", "BCM Gravelines-Dunkerque", "ADA Blois",
+          ],
+        },
+      },
+      "États-Unis": {
+        levels: {
+          NBA: [
+            "Lakers", "Celtics", "Warriors", "Bucks", "Nuggets", "Heat", "Suns", "76ers", "Knicks",
+            "Nets", "Clippers", "Mavericks", "Grizzlies", "Kings", "Timberwolves", "Thunder", "Pelicans",
+            "Spurs", "Rockets", "Jazz", "Trail Blazers", "Bulls", "Cavaliers", "Pistons", "Pacers",
+            "Hawks", "Hornets", "Magic", "Wizards", "Raptors",
+          ],
+        },
+      },
     },
   },
   Rugby: {
     countries: {
-      France: { levels: { "Top 14": ["Stade Toulousain", "Racing 92", "Stade Rochelais", "UBB"] } },
+      France: {
+        levels: {
+          "Top 14": [
+            "Stade Toulousain", "Racing 92", "Stade Rochelais", "UBB", "Stade Français", "RC Toulon",
+            "ASM Clermont Auvergne", "Castres Olympique", "Section Paloise", "Montpellier Hérault Rugby",
+            "Aviron Bayonnais", "USA Perpignan", "Lyon OU", "Stade Montois",
+          ],
+        },
+      },
     },
   },
   Handball: {
     countries: {
-      France: { levels: { "Starligue": ["PSG Handball", "Montpellier HB", "HBC Nantes", "Chambéry Savoie"] } },
+      France: {
+        levels: {
+          "Starligue": [
+            "PSG Handball", "Montpellier HB", "HBC Nantes", "Chambéry Savoie", "Saint-Raphaël VHB",
+            "Cesson-Rennes MHB", "Nîmes Handball", "USDK Dunkerque", "US Ivry Handball", "C' Chartres Métropole",
+            "Aix HB Provence", "US Créteil Handball", "Istres Provence Handball", "Tremblay-en-France Handball",
+            "Billère Handball Pau", "Pontault-Combault Handball",
+          ],
+        },
+      },
     },
   },
   Volleyball: {
     countries: {
-      France: { levels: { "Ligue A": ["Paris Volley", "Tours VB", "AS Cannes", "Chaumont VB 52"] } },
+      France: {
+        levels: {
+          "Ligue A": [
+            "Paris Volley", "Tours VB", "AS Cannes Volley-Ball", "Chaumont VB 52", "Montpellier UC Volley",
+            "Rennes Volley 35", "Narbonne Volley", "Nantes Rezé Métropole Volley", "Toulouse Spacer's Volley",
+            "GFC Ajaccio Volley", "Sète Volley", "Plessis-Robinson Volley 92",
+          ],
+        },
+      },
     },
   },
   Tennis: {
@@ -2039,10 +2134,9 @@ const SPORT_DATA = {
 };
 const SPORT_TYPES = Object.keys(SPORT_DATA);
 const SPORT_CONTENT_TYPES = [
-  { id: "calendrier", label: "Calendrier" },
-  { id: "classement", label: "Classement" },
   { id: "actualite", label: "Actualité" },
-  { id: "forme", label: "État de forme" },
+  { id: "resultats", label: "Résultats" },
+  { id: "transferts", label: "Transferts" },
 ];
 function pillBtn(active) {
   return { padding: "6px 12px", borderRadius: 20, border: active ? "1.5px solid var(--accent)" : "1px solid #E3DBCB", background: active ? "color-mix(in srgb, var(--accent) 12%, white)" : "none", color: active ? "var(--accent)" : "#5C5346", fontSize: 13, fontWeight: 600, cursor: "pointer" };
@@ -2055,7 +2149,7 @@ function SportAvanceWidget({ config, updateConfig }) {
   const [country, setCountry] = useState(config?.country || null);
   const [level, setLevel] = useState(config?.level || null);
   const [selections, setSelections] = useState(config?.selections || []);
-  const [contents, setContents] = useState(config?.contents || { calendrier: true, classement: true, actualite: false, forme: false });
+  const [contents, setContents] = useState(config?.contents || { actualite: true, resultats: true, transferts: false });
 
   const isIndividual = sport && !!SPORT_DATA[sport]?.players;
   const countries = sport && !isIndividual ? Object.keys(SPORT_DATA[sport].countries) : [];
@@ -2080,13 +2174,20 @@ function SportAvanceWidget({ config, updateConfig }) {
         {config.selections.map((name) => (
           <div key={name} style={{ paddingTop: 10, marginTop: 10, borderTop: "1px solid #EFE9DD" }}>
             <div style={{ fontSize: 14, fontWeight: 600, color: "#262138", marginBottom: 6 }}>{name}</div>
-            {config.contents.calendrier && (() => {
-              const f = fakeFixture(name);
-              return <div style={{ fontSize: 13, color: "#5C5346", marginBottom: 4 }}><span style={{ color: "#8A8071" }}>Prochain — </span>{name} vs {f.opponent} · {f.date.toLocaleDateString("fr-FR", { day: "numeric", month: "long" })}</div>;
-            })()}
-            {config.contents.classement && <div style={{ fontSize: 13, color: "#5C5346", marginBottom: 4 }}><span style={{ color: "#8A8071" }}>Classement — </span>{fakeRank(name)}e</div>}
-            {config.contents.actualite && <div style={{ fontSize: 13, color: "#5C5346", marginBottom: 4 }}><span style={{ color: "#8A8071" }}>Actu — </span>{fakeNews(name)}</div>}
-            {config.contents.forme && <div style={{ fontSize: 13, color: "#5C5346" }}><span style={{ color: "#8A8071" }}>Forme — </span>{fakeForm(name)}</div>}
+            {config.contents.actualite && <div style={{ fontSize: 13, color: "#5C5346", marginBottom: 8 }}><span style={{ color: "#8A8071" }}>Actu — </span>{fakeNews(name)}</div>}
+            {config.contents.resultats && (
+              <div style={{ marginBottom: 8 }}>
+                <div style={{ fontSize: 13, color: "#5C5346", marginBottom: 4 }}><span style={{ color: "#8A8071" }}>Classement — </span>{fakeRank(name)}e</div>
+                <div style={{ fontSize: 12, color: "#8A8071", marginBottom: 2 }}>5 derniers résultats</div>
+                {fakeLastResults(name).map((r, i) => (
+                  <div key={i} style={{ fontSize: 13, color: "#5C5346", padding: "2px 0" }}>
+                    {name} {r.scoreFor} – {r.scoreAgainst} {r.opponent}
+                    <span style={{ color: "#9C9384", fontSize: 11 }}> · {r.date.toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {config.contents.transferts && <div style={{ fontSize: 13, color: "#5C5346" }}><span style={{ color: "#8A8071" }}>Transferts — </span>{fakeTransfer(name)}</div>}
           </div>
         ))}
       </Card>
