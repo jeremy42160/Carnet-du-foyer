@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import {
   Home, CheckSquare, ShoppingCart, UtensilsCrossed, CalendarClock, CalendarDays, Briefcase,
-  Plus, Trash2, Check, X, Loader2, Shuffle, ChevronLeft, ChevronRight, Bell, BellOff, User, Palette, Users, Pencil, Settings,
+  Plus, Trash2, Check, X, Loader2, Shuffle, ChevronLeft, ChevronRight, Bell, BellOff, User, Palette, Users, Pencil, Settings, Camera,
 } from "lucide-react";
 import { useCollection } from "./hooks/useCollection";
 import { useHouseholdConfig, DEFAULT_MEAL_FIELDS } from "./hooks/useHouseholdConfig";
@@ -16,6 +16,7 @@ const TABS = [
   { id: "taches", label: "Tâches", icon: CheckSquare },
   { id: "calendrier", label: "Calendrier", icon: CalendarDays },
   { id: "repas", label: "Enfants", icon: UtensilsCrossed },
+  { id: "recettes", label: "Repas", icon: Camera },
   { id: "valise", label: "Valises", icon: Briefcase },
   { id: "courses", label: "Courses", icon: ShoppingCart },
   { id: "profil", label: "Profil", icon: User },
@@ -288,6 +289,8 @@ function AppContent({ householdId, username, isAdmin, onLogout, navTabs, updateN
           <Calendrier tasks={tasksC.items} repas={repasC.items} activites={activitesC.items} tasksCol={tasksC} repasCol={repasC} activitesCol={activitesC} notify={notify} workers={workers} friends={friendsC.items} kids={kids} onQuickAdd={openAddWith} />
         ) : active === "repas" ? (
           <Repas repas={repasC.items} col={repasC} notify={notify} sendPush={push} kids={kids} mealFields={householdConfig?.mealFields || []} saveHouseholdConfig={saveHouseholdConfig} presetDate={repasDateRequest.date} presetToken={repasDateRequest.token} />
+        ) : active === "recettes" ? (
+          <Recettes />
         ) : active === "activites" ? (
           <Activites activites={activitesC.items} col={activitesC} notify={notify} sendPush={push} kids={kids} />
         ) : active === "valise" ? (
@@ -3953,6 +3956,160 @@ function RepasHistoryItem({ r, kids, col, remove, notify }) {
           <div style={{ fontSize: 13, color: "#5C5346", marginBottom: 6 }}>{t.label}</div>
           <KidMultiPicker kids={kids} selected={t.assignees || []} onChange={(next) => updateRow(t.id, { assignees: next })} />
         </div>
+      ))}
+    </div>
+  );
+}
+
+// Redimensionne une image côté navigateur avant envoi (limite la taille de la
+// requête et le coût/latence de l'analyse) et la renvoie en data URL JPEG.
+function resizeImageFile(file, maxDim = 1024) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const objectUrl = URL.createObjectURL(file);
+    img.onload = () => {
+      let { width, height } = img;
+      if (width > maxDim || height > maxDim) {
+        const scale = maxDim / Math.max(width, height);
+        width = Math.round(width * scale);
+        height = Math.round(height * scale);
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      canvas.getContext("2d").drawImage(img, 0, 0, width, height);
+      URL.revokeObjectURL(objectUrl);
+      resolve(canvas.toDataURL("image/jpeg", 0.8));
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error("Image illisible"));
+    };
+    img.src = objectUrl;
+  });
+}
+
+const RECIPE_LEVEL_LABELS = { rapide: "Rapide", moyen: "Moyen", elabore: "Élaboré" };
+
+// Onglet "Repas" : photo du frigo/des aliments → analyse par IA (api/recipes.js,
+// nécessite ANTHROPIC_API_KEY côté Vercel) → 3 suggestions de recettes à
+// niveaux de préparation croissants, à partir des ingrédients repérés.
+function Recettes() {
+  const [preview, setPreview] = useState(null);
+  const [imageData, setImageData] = useState(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [error, setError] = useState("");
+  const [result, setResult] = useState(null);
+  const fileInputRef = useRef(null);
+
+  const handleFile = async (file) => {
+    if (!file) return;
+    setError("");
+    setResult(null);
+    try {
+      const dataUrl = await resizeImageFile(file);
+      setImageData(dataUrl);
+      setPreview(dataUrl);
+    } catch {
+      setError("Impossible de charger cette image.");
+    }
+  };
+
+  const analyze = async () => {
+    if (!imageData) return;
+    setAnalyzing(true);
+    setError("");
+    setResult(null);
+    try {
+      const res = await fetch("/api/recipes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image: imageData }),
+      });
+      let json;
+      try {
+        json = await res.json();
+      } catch {
+        // Réponse non-JSON (ex. en développement local, où api/recipes.js n'est pas servi).
+        throw new Error("Analyse indisponible pour le moment.");
+      }
+      if (!res.ok) throw new Error(json.error || "Analyse indisponible pour le moment.");
+      setResult(json);
+    } catch (e) {
+      setError(e.message || "Analyse indisponible pour le moment.");
+    }
+    setAnalyzing(false);
+  };
+
+  return (
+    <div>
+      <Card>
+        <SectionLabel>Photo du frigo ou des aliments</SectionLabel>
+        <div style={{ fontSize: 13, color: "#8A8071", marginBottom: 12 }}>
+          Prenez une photo de votre frigo ou de vos aliments : on vous propose 3 recettes réalisables
+          avec, à différents niveaux de préparation.
+        </div>
+        {preview && (
+          <img src={preview} alt="" style={{ width: "100%", borderRadius: 10, marginBottom: 12, maxHeight: 260, objectFit: "cover" }} />
+        )}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          onChange={(e) => handleFile(e.target.files?.[0])}
+          style={{ display: "none" }}
+        />
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={() => fileInputRef.current?.click()} style={ghostBtn}>
+            {preview ? "Changer la photo" : "📷 Prendre / choisir une photo"}
+          </button>
+          {preview && (
+            <button
+              onClick={analyze}
+              disabled={analyzing}
+              style={{ flex: 1, background: "var(--accent)", color: "#FBF8F3", border: "none", borderRadius: 10, fontWeight: 600, fontSize: 13, cursor: analyzing ? "not-allowed" : "pointer", opacity: analyzing ? 0.7 : 1 }}
+            >
+              {analyzing ? "Analyse en cours…" : "Analyser et proposer des recettes"}
+            </button>
+          )}
+        </div>
+        {error && <div style={{ fontSize: 12, color: "#B0455A", marginTop: 10 }}>{error}</div>}
+      </Card>
+
+      {result?.ingredients?.length > 0 && (
+        <Card>
+          <SectionLabel>Ingrédients repérés</SectionLabel>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {result.ingredients.map((ing, i) => (
+              <span key={i} style={{ background: "#F1ECE2", borderRadius: 20, padding: "4px 12px", fontSize: 13, color: "#5C5346" }}>{ing}</span>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {result?.recipes?.map((r, i) => (
+        <Card key={i}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: "var(--accent)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              {RECIPE_LEVEL_LABELS[r.niveau] || r.niveau}
+            </span>
+            {r.duree && <span style={{ fontSize: 12, color: "#8A8071" }}>{r.duree}</span>}
+          </div>
+          <div style={{ fontSize: 16, fontWeight: 600, color: "#262138", marginBottom: 8 }}>{r.titre}</div>
+          {r.ingredients?.length > 0 && (
+            <div style={{ fontSize: 13, color: "#5C5346", marginBottom: 8 }}>
+              <strong>Ingrédients : </strong>{r.ingredients.join(", ")}
+            </div>
+          )}
+          {r.etapes?.length > 0 && (
+            <ol style={{ margin: 0, paddingLeft: 18 }}>
+              {r.etapes.map((step, j) => (
+                <li key={j} style={{ fontSize: 13, color: "#5C5346", padding: "3px 0" }}>{step}</li>
+              ))}
+            </ol>
+          )}
+        </Card>
       ))}
     </div>
   );
