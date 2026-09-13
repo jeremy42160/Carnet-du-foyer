@@ -1886,8 +1886,16 @@ function SportWidget({ favoriteClub, updateFavoriteClub }) {
             <div style={{ fontSize: 15, fontWeight: 600, color: "#262138" }}>{favoriteClub.name}</div>
             <div style={{ fontSize: 11, color: "#8A8071" }}>{favoriteClub.sport}{favoriteClub.level ? ` · ${favoriteClub.level}` : ""}</div>
           </div>
-          <IllustrativeBanner>Contenu illustratif — aucune API sportive fiable et gratuite trouvée pour ces données.</IllustrativeBanner>
-          <SportContentBlock name={favoriteClub.name} contents={favoriteClub.contents || {}} />
+          <IllustrativeBanner>Contenu illustratif, cliquez une ligne pour vérifier la vraie information — aucune API sportive fiable et gratuite trouvée pour ces données.</IllustrativeBanner>
+          <SportContentBlock
+            name={favoriteClub.name}
+            contents={favoriteClub.contents || {}}
+            opponentPool={
+              favoriteClub.individual
+                ? SPORT_DATA[favoriteClub.sport]?.players || []
+                : SPORT_DATA[favoriteClub.sport]?.countries?.[favoriteClub.country]?.levels?.[favoriteClub.level] || []
+            }
+          />
         </>
       )}
 
@@ -1917,10 +1925,15 @@ function fakeRank(name, max = 20) {
   const rand = seededRandom("rank:" + name);
   return 1 + Math.floor(rand() * max);
 }
-// 5 derniers résultats (adversaire, score, date passée), du plus récent au plus ancien.
-function fakeLastResults(name, n = 5) {
+// 5 derniers résultats (adversaire, score, date passée), du plus récent au plus
+// ancien. Les adversaires viennent du même niveau/pays que le club ou sportif
+// suivi (opponentPool) quand on le connaît, pour rester crédible — avec un
+// repli générique pour un nom tapé manuellement dont on ne connaît pas la ligue.
+const GENERIC_OPPONENTS = ["FC Rival", "AS Adversaire", "Union Sportive", "Racing Club", "Olympique Voisin", "Stade Concurrent", "US Challenger"];
+function fakeLastResults(name, opponentPool = [], n = 5) {
   const rand = seededRandom("resultats:" + name);
-  const opponents = ["FC Rival", "AS Adversaire", "Union Sportive", "Racing Club", "Olympique Voisin", "Stade Concurrent", "US Challenger"];
+  const candidates = opponentPool.filter((o) => o !== name);
+  const opponents = candidates.length ? candidates : GENERIC_OPPONENTS;
   const results = [];
   let daysAgo = 3;
   for (let i = 0; i < n; i++) {
@@ -1933,6 +1946,12 @@ function fakeLastResults(name, n = 5) {
     daysAgo += 4 + Math.floor(rand() * 4);
   }
   return results;
+}
+// Lien de recherche externe (Google) pour retrouver la vraie information sur un
+// sujet donné — utilisé pour rendre chaque ligne de contenu illustratif cliquable
+// vers une source réelle, plutôt que de laisser un texte inventé sans suite.
+function searchUrl(query) {
+  return `https://www.google.com/search?q=${encodeURIComponent(query)}`;
 }
 // Mélange rumeurs (non confirmées) et transferts présentés comme finalisés,
 // comme demandé — toujours illustratif, jamais présenté comme une vraie source.
@@ -1952,26 +1971,44 @@ function fakeTransfer(name) {
   return pickSeeded(rand, [...TRANSFER_RUMOR_TEMPLATES, ...TRANSFER_DONE_TEMPLATES], 1)[0].replace("{name}", name);
 }
 
+const contentLinkStyle = { display: "block", color: "inherit", textDecoration: "none" };
+
 // Bloc de contenu partagé entre le widget "Sport" (un seul favori) et "Sport
 // avancé" (plusieurs) : affiche les catégories cochées (voir SPORT_CONTENT_TYPES,
-// plus bas) pour un nom de club/sportif donné.
-function SportContentBlock({ name, contents }) {
+// plus bas) pour un nom de club/sportif donné. `opponentPool` (les autres clubs/
+// sportifs du même niveau) sert à générer des adversaires réels plutôt que des
+// noms génériques. Chaque ligne est cliquable vers une recherche externe, pour
+// pouvoir vérifier ou approfondir la vraie information derrière ce contenu
+// illustratif (voir IllustrativeBanner à l'appel).
+function SportContentBlock({ name, contents, opponentPool = [] }) {
   return (
     <>
-      {contents.actualite && <div style={{ fontSize: 13, color: "#5C5346", marginBottom: 8 }}><span style={{ color: "#8A8071" }}>Actu — </span>{fakeNews(name)}</div>}
+      {contents.actualite && (
+        <a href={searchUrl(`${name} actualité`)} target="_blank" rel="noopener noreferrer" style={{ ...contentLinkStyle, marginBottom: 8 }}>
+          <div style={{ fontSize: 13, color: "#5C5346" }}><span style={{ color: "#8A8071" }}>Actu — </span>{fakeNews(name)}</div>
+        </a>
+      )}
       {contents.resultats && (
         <div style={{ marginBottom: 8 }}>
-          <div style={{ fontSize: 13, color: "#5C5346", marginBottom: 4 }}><span style={{ color: "#8A8071" }}>Classement — </span>{fakeRank(name)}e</div>
+          <a href={searchUrl(`${name} classement`)} target="_blank" rel="noopener noreferrer" style={contentLinkStyle}>
+            <div style={{ fontSize: 13, color: "#5C5346", marginBottom: 4 }}><span style={{ color: "#8A8071" }}>Classement — </span>{fakeRank(name)}e</div>
+          </a>
           <div style={{ fontSize: 12, color: "#8A8071", marginBottom: 2 }}>5 derniers résultats</div>
-          {fakeLastResults(name).map((r, i) => (
-            <div key={i} style={{ fontSize: 13, color: "#5C5346", padding: "2px 0" }}>
-              {name} {r.scoreFor} – {r.scoreAgainst} {r.opponent}
-              <span style={{ color: "#9C9384", fontSize: 11 }}> · {r.date.toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}</span>
-            </div>
+          {fakeLastResults(name, opponentPool).map((r, i) => (
+            <a key={i} href={searchUrl(`${name} vs ${r.opponent}`)} target="_blank" rel="noopener noreferrer" style={contentLinkStyle}>
+              <div style={{ fontSize: 13, color: "#5C5346", padding: "2px 0" }}>
+                {name} {r.scoreFor} – {r.scoreAgainst} {r.opponent}
+                <span style={{ color: "#9C9384", fontSize: 11 }}> · {r.date.toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}</span>
+              </div>
+            </a>
           ))}
         </div>
       )}
-      {contents.transferts && <div style={{ fontSize: 13, color: "#5C5346" }}><span style={{ color: "#8A8071" }}>Transferts — </span>{fakeTransfer(name)}</div>}
+      {contents.transferts && (
+        <a href={searchUrl(`${name} transferts rumeurs`)} target="_blank" rel="noopener noreferrer" style={contentLinkStyle}>
+          <div style={{ fontSize: 13, color: "#5C5346" }}><span style={{ color: "#8A8071" }}>Transferts — </span>{fakeTransfer(name)}</div>
+        </a>
+      )}
     </>
   );
 }
@@ -2173,11 +2210,11 @@ function SportAvanceWidget({ config, updateConfig }) {
           <SectionLabel>Sport — {config.sport}</SectionLabel>
           <button onClick={() => setEditing(true)} style={{ background: "none", border: "none", color: "var(--accent)", fontSize: 12, fontWeight: 600, cursor: "pointer", padding: 0 }}>Modifier</button>
         </div>
-        <IllustrativeBanner>Données de clubs/ligues illustratives — aucune API sportive fiable et gratuite trouvée pour toutes les compétitions.</IllustrativeBanner>
+        <IllustrativeBanner>Contenu illustratif, cliquez une ligne pour vérifier la vraie information — aucune API sportive fiable et gratuite trouvée pour toutes les compétitions.</IllustrativeBanner>
         {config.selections.map((name) => (
           <div key={name} style={{ paddingTop: 10, marginTop: 10, borderTop: "1px solid #EFE9DD" }}>
             <div style={{ fontSize: 14, fontWeight: 600, color: "#262138", marginBottom: 6 }}>{name}</div>
-            <SportContentBlock name={name} contents={config.contents} />
+            <SportContentBlock name={name} contents={config.contents} opponentPool={pool} />
           </div>
         ))}
       </Card>
