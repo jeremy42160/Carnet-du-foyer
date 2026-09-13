@@ -12,7 +12,7 @@ import { sendPush } from "./push";
 import { watchAuthState, getMyHousehold, login, register, logout, touchLastLogin, saveNavTabs, saveProfileInfo, saveFavoriteClub, saveHomeWidgets } from "./auth";
 
 const TABS = [
-  { id: "jour", label: "Aujourd'hui", icon: Home },
+  { id: "jour", label: "Accueil", icon: Home },
   { id: "taches", label: "Tâches", icon: CheckSquare },
   { id: "calendrier", label: "Calendrier", icon: CalendarDays },
   { id: "repas", label: "Enfants", icon: UtensilsCrossed },
@@ -943,6 +943,115 @@ function DraggableNavList({ items, renderItem, onReorder, rowHeight = 52 }) {
               </span>
               {renderItem(item)}
             </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// Grille de widgets réorganisable en glisser-déposer directement sur les cartes
+// (contrairement à DraggableNavList, qui réordonne une liste de lignes abstraites).
+// Principe : au pointerDown sur la poignée d'une carte, celle-ci passe en
+// position fixed et suit le pointeur ; les autres cartes échangent leur place
+// dès que le pointeur survole leur centre. L'ordre n'est communiqué au parent
+// (onReorder) qu'au relâchement.
+function WidgetGrid({ instances, editing, renderContent, renderControls, onReorder }) {
+  const itemRefs = useRef({});
+  const dragSizeRef = useRef({ width: 0, height: 0 });
+  const grabOffsetRef = useRef({ x: 0, y: 0 });
+  const [order, setOrder] = useState(() => instances.map((i) => i.id));
+  const [draggedId, setDraggedId] = useState(null);
+  const [dragPos, setDragPos] = useState({ x: 0, y: 0 });
+
+  const idsKey = instances.map((i) => i.id).join(",");
+  useEffect(() => {
+    setOrder((prev) => {
+      const ids = idsKey ? idsKey.split(",") : [];
+      const kept = prev.filter((id) => ids.includes(id));
+      const added = ids.filter((id) => !kept.includes(id));
+      return [...kept, ...added];
+    });
+  }, [idsKey]);
+
+  const byId = Object.fromEntries(instances.map((i) => [i.id, i]));
+  const orderedInstances = order.map((id) => byId[id]).filter(Boolean);
+
+  const pointerXY = (e) => ({ x: e.clientX ?? e.touches?.[0]?.clientX ?? 0, y: e.clientY ?? e.touches?.[0]?.clientY ?? 0 });
+
+  const handlePointerDown = (e, id) => {
+    if (!editing) return;
+    const el = itemRefs.current[id];
+    const rect = el?.getBoundingClientRect();
+    const { x, y } = pointerXY(e);
+    grabOffsetRef.current = { x: x - (rect?.left || 0), y: y - (rect?.top || 0) };
+    dragSizeRef.current = { width: rect?.width || 0, height: rect?.height || 0 };
+    setDraggedId(id);
+    setDragPos({ x: rect?.left || 0, y: rect?.top || 0 });
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+  };
+  const handlePointerMove = (e) => {
+    if (!draggedId) return;
+    const { x, y } = pointerXY(e);
+    setDragPos({ x: x - grabOffsetRef.current.x, y: y - grabOffsetRef.current.y });
+    const reordered = reorderFor(draggedId, x, y);
+    if (reordered) setOrder(reordered);
+  };
+  // Recalculé aussi au relâchement (pas seulement pendant le glisser) : certains
+  // environnements ne livrent qu'un pointerdown + pointerup sans pointermove
+  // intermédiaire (ex. automatisation, drag très rapide) — sans ce filet, le
+  // widget resterait alors à sa position d'origine malgré le glisser-déposer.
+  const reorderFor = (id, x, y) => {
+    let closestId = null;
+    let closestDist = Infinity;
+    for (const otherId of order) {
+      if (otherId === id) continue;
+      const r = itemRefs.current[otherId]?.getBoundingClientRect();
+      if (!r) continue;
+      const dist = (r.left + r.width / 2 - x) ** 2 + (r.top + r.height / 2 - y) ** 2;
+      if (dist < closestDist) { closestDist = dist; closestId = otherId; }
+    }
+    if (!closestId) return null;
+    const from = order.indexOf(id);
+    const to = order.indexOf(closestId);
+    if (from === to) return null;
+    const next = [...order];
+    next.splice(from, 1);
+    next.splice(to, 0, id);
+    return next;
+  };
+  const handlePointerUp = (e) => {
+    if (!draggedId) return;
+    const { x, y } = pointerXY(e);
+    const finalOrder = reorderFor(draggedId, x, y) || order;
+    setDraggedId(null);
+    setOrder(finalOrder);
+    onReorder(finalOrder.map((id) => byId[id]));
+  };
+
+  return (
+    <div onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerLeave={handlePointerUp} style={{ display: "flex", flexWrap: "wrap", gap: 12, marginBottom: 4 }}>
+      {orderedInstances.map((inst) => {
+        const isDragged = inst.id === draggedId;
+        return (
+          <div
+            key={inst.id}
+            ref={(el) => { itemRefs.current[inst.id] = el; }}
+            style={{
+              flex: (inst.size || "full") === "half" ? "1 1 calc(50% - 6px)" : "1 1 100%",
+              minWidth: 150,
+              position: isDragged ? "fixed" : "relative",
+              left: isDragged ? dragPos.x : "auto",
+              top: isDragged ? dragPos.y : "auto",
+              width: isDragged ? dragSizeRef.current.width : "auto",
+              zIndex: isDragged ? 50 : 1,
+              transform: isDragged ? "scale(1.03) rotate(-1deg)" : "none",
+              boxShadow: isDragged ? "0 14px 30px rgba(0,0,0,0.18)" : "none",
+              transition: isDragged ? "none" : "transform 0.15s ease",
+            }}
+          >
+            {renderContent(inst)}
+            {editing && renderControls(inst, { onPointerDown: (e) => handlePointerDown(e, inst.id) })}
           </div>
         );
       })}
@@ -2118,7 +2227,6 @@ const WIDGET_CATALOG = [
   { type: "bourse", label: "Bourses" },
   { type: "horoscope", label: "Horoscope" },
 ];
-const WIDGET_LABELS = Object.fromEntries(WIDGET_CATALOG.map((w) => [w.type, w.label]));
 
 function Overview({ tasks, shopping, repas, activites, goTo, notify, username, householdId, favoriteClub, updateFavoriteClub, homeWidgets, updateHomeWidgets }) {
   const iso = todayISO();
@@ -2205,6 +2313,19 @@ function Overview({ tasks, shopping, repas, activites, goTo, notify, username, h
       default: return null;
     }
   };
+  const renderWidgetControls = (inst, dragHandleProps) => (
+    <div style={{ position: "absolute", top: -10, right: 8, display: "flex", alignItems: "center", gap: 2, background: "#FBF8F3", border: "1px solid #E3DBCB", borderRadius: 20, padding: "3px 5px", boxShadow: "0 2px 6px rgba(0,0,0,0.1)", zIndex: 2 }}>
+      <span {...dragHandleProps} style={{ cursor: "grab", fontSize: 15, color: "#8A8071", padding: "2px 5px", touchAction: "none", userSelect: "none" }}>⠿</span>
+      <button
+        onClick={() => toggleInstanceSize(inst.id)}
+        aria-label="Changer la taille du widget"
+        style={{ background: "none", border: "none", color: "var(--accent)", fontSize: 13, fontWeight: 600, cursor: "pointer", padding: "2px 5px" }}
+      >
+        {(inst.size || "full") === "full" ? "▭" : "▤"}
+      </button>
+      <DeleteButton onDelete={() => removeInstance(inst.id)} label="ce widget" />
+    </div>
+  );
 
   return (
     <div>
@@ -2233,40 +2354,18 @@ function Overview({ tasks, shopping, repas, activites, goTo, notify, username, h
         </Card>
       )}
 
-      {editingWidgets ? (
-        <Card>
-          <div style={{ fontSize: 12, color: "#8A8071", marginBottom: 10 }}>
-            Appuyez sur ⠿ et glissez pour réorganiser. Choisissez la taille, ou supprimez un widget.
-          </div>
-          <DraggableNavList
-            items={instances}
-            onReorder={(reordered) => updateHomeWidgets({ instances: reordered })}
-            renderItem={(inst) => {
-              const size = inst.size || "full";
-              return (
-                <>
-                  <span style={{ flex: 1, fontSize: 14 }}>{WIDGET_LABELS[inst.type] || inst.type}</span>
-                  <button
-                    onClick={() => toggleInstanceSize(inst.id)}
-                    style={{ background: "none", border: "1px solid #E3DBCB", borderRadius: 8, padding: "4px 10px", fontSize: 12, color: "var(--accent)", cursor: "pointer" }}
-                  >
-                    {size === "full" ? "▭ Pleine" : "▤ Moitié"}
-                  </button>
-                  <DeleteButton onDelete={() => removeInstance(inst.id)} label="ce widget" />
-                </>
-              );
-            }}
-          />
-        </Card>
-      ) : (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginBottom: 4 }}>
-          {instances.map((inst) => (
-            <div key={inst.id} style={{ flex: (inst.size || "full") === "half" ? "1 1 calc(50% - 6px)" : "1 1 100%", minWidth: 150 }}>
-              {renderInstance(inst)}
-            </div>
-          ))}
+      {editingWidgets && (
+        <div style={{ fontSize: 12, color: "#8A8071", marginBottom: 10 }}>
+          Attrapez ⠿ et glissez une carte pour la déplacer. Choisissez sa taille, ou supprimez-la.
         </div>
       )}
+      <WidgetGrid
+        instances={instances}
+        editing={editingWidgets}
+        renderContent={renderInstance}
+        renderControls={renderWidgetControls}
+        onReorder={(reordered) => updateHomeWidgets({ instances: reordered })}
+      />
 
       {notifPromptVisible && (
         <Card style={{ border: "1.5px solid var(--accent)" }}>
