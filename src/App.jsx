@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import {
   Home, CheckSquare, ShoppingCart, UtensilsCrossed, CalendarClock, CalendarDays, Briefcase,
-  Plus, Trash2, Check, X, Loader2, Shuffle, ChevronLeft, ChevronRight, Bell, BellOff, User, Palette, Users, Pencil,
+  Plus, Trash2, Check, X, Loader2, Shuffle, ChevronLeft, ChevronRight, Bell, BellOff, User, Palette, Users, Pencil, Settings,
 } from "lucide-react";
 import { useCollection } from "./hooks/useCollection";
 import { useHouseholdConfig, DEFAULT_MEAL_FIELDS } from "./hooks/useHouseholdConfig";
@@ -786,6 +786,28 @@ export default function App() {
 function Card({ children, style, onClick }) {
   return <div onClick={onClick} style={{ background: "#FBF8F3", border: "1px solid #E3DBCB", borderRadius: 14, padding: 18, marginBottom: 14, ...style }}>{children}</div>;
 }
+
+// Popup générique centrée, fond assombri cliquable pour fermer (sauf si onClose
+// est omis, ce qui empêche la fermeture — utilisé le temps qu'une config obligatoire soit faite).
+function Modal({ title, onClose, children }) {
+  return (
+    <div
+      onClick={onClose}
+      style={{ position: "fixed", inset: 0, background: "rgba(38,33,56,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, padding: 16 }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{ background: "#FBF8F3", borderRadius: 16, padding: 20, maxWidth: 420, width: "100%", maxHeight: "85vh", overflowY: "auto", boxShadow: "0 20px 50px rgba(0,0,0,0.25)" }}
+      >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+          <span className="display" style={{ fontStyle: "italic", fontSize: 18, color: "#262138" }}>{title}</span>
+          {onClose && <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "flex" }}><X size={18} color="#8A8071" /></button>}
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
 function SectionLabel({ children }) {
   return <div style={{ fontSize: 13, fontWeight: 600, color: "#8A8071", marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.06em" }}>{children}</div>;
 }
@@ -1050,7 +1072,11 @@ function WidgetGrid({ instances, editing, renderContent, renderControls, onReord
               left: isDragged ? dragPos.x : "auto",
               top: isDragged ? dragPos.y : "auto",
               width: isDragged ? dragSizeRef.current.width : "auto",
-              zIndex: isDragged ? 50 : 1,
+              // z-index laissé à "auto" hors glisser : lui donner une valeur ici créerait un
+              // nouveau contexte d'empilement qui piégerait les popups (Modal) ouvertes par un
+              // widget à l'intérieur — leur propre z-index élevé ne compterait alors que parmi
+              // les enfants de CETTE carte, pas face aux autres cartes rendues plus loin dans le DOM.
+              zIndex: isDragged ? 50 : "auto",
               transform: isDragged ? "scale(1.03) rotate(-1deg)" : "none",
               boxShadow: isDragged ? "0 14px 30px rgba(0,0,0,0.18)" : "none",
               transition: isDragged ? "none" : "transform 0.15s ease",
@@ -1681,43 +1707,154 @@ function Meteo({ onData }) {
   );
 }
 
-// Widget "Sport" : suit un seul club favori, choisi par recherche par nom
-// (API gratuite TheSportsDB), affiche le prochain match et le dernier résultat.
-function SportWidget({ favoriteClub, updateFavoriteClub }) {
-  const [query, setQuery] = useState("");
-  const [results, setResults] = useState(null);
-  const [searching, setSearching] = useState(false);
-  const [searchError, setSearchError] = useState("");
-  const [configuring, setConfiguring] = useState(!favoriteClub);
+// Sélecteur en cascade sport → pays → niveau → club (ou directement sportif
+// pour les sports individuels), sélection unique, avec saisie manuelle possible
+// à la dernière étape si le nom voulu n'est pas dans la liste. Partagé par le
+// widget "Sport" (sélection unique) et sert de base au widget "Sport avancé".
+function SportPicker({ onPick }) {
+  const [sport, setSport] = useState(null);
+  const [country, setCountry] = useState(null);
+  const [level, setLevel] = useState(null);
+  const [manualName, setManualName] = useState("");
 
+  const isIndividual = sport && !!SPORT_DATA[sport]?.players;
+  const countries = sport && !isIndividual ? Object.keys(SPORT_DATA[sport].countries) : [];
+  const levels = sport && country && !isIndividual ? Object.keys(SPORT_DATA[sport].countries[country].levels) : [];
+  const pool = isIndividual ? SPORT_DATA[sport].players : sport && country && level ? SPORT_DATA[sport].countries[country].levels[level] : [];
+
+  const pick = (name) => onPick({ sport, individual: isIndividual, country: isIndividual ? null : country, level: isIndividual ? null : level, name });
+
+  return (
+    <div>
+      <div style={{ fontSize: 12, color: "#8A8071", marginBottom: 6 }}>1. Sport</div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 14 }}>
+        {SPORT_TYPES.map((s) => (
+          <button key={s} onClick={() => { setSport(s); setCountry(null); setLevel(null); }} style={pillBtn(sport === s)}>{s}</button>
+        ))}
+      </div>
+
+      {sport && !isIndividual && (
+        <>
+          <div style={{ fontSize: 12, color: "#8A8071", marginBottom: 6 }}>2. Pays</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 14 }}>
+            {countries.map((c) => (
+              <button key={c} onClick={() => { setCountry(c); setLevel(null); }} style={pillBtn(country === c)}>{c}</button>
+            ))}
+          </div>
+        </>
+      )}
+
+      {sport && country && !isIndividual && (
+        <>
+          <div style={{ fontSize: 12, color: "#8A8071", marginBottom: 6 }}>3. Niveau</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 14 }}>
+            {levels.map((l) => (
+              <button key={l} onClick={() => setLevel(l)} style={pillBtn(level === l)}>{l}</button>
+            ))}
+          </div>
+        </>
+      )}
+
+      {sport && (isIndividual || level) && (
+        <>
+          <div style={{ fontSize: 12, color: "#8A8071", marginBottom: 6 }}>{isIndividual ? "2. Sportif" : "4. Club"}</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
+            {pool.map((name) => (
+              <button key={name} onClick={() => pick(name)} style={pillBtn(false)}>{name}</button>
+            ))}
+          </div>
+          <div style={{ fontSize: 12, color: "#8A8071", marginBottom: 6 }}>Pas dans la liste ?</div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input
+              value={manualName}
+              onChange={(e) => setManualName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && manualName.trim() && pick(manualName.trim())}
+              placeholder={isIndividual ? "Nom du sportif…" : "Nom du club…"}
+              style={{ flex: 1, minWidth: 0, padding: "9px 10px", borderRadius: 10, border: "1px solid #E3DBCB", fontSize: 13 }}
+            />
+            <button
+              onClick={() => manualName.trim() && pick(manualName.trim())}
+              disabled={!manualName.trim()}
+              style={{ background: "var(--accent)", color: "#FBF8F3", border: "none", borderRadius: 10, padding: "0 14px", fontWeight: 600, fontSize: 13, cursor: manualName.trim() ? "pointer" : "not-allowed", opacity: manualName.trim() ? 1 : 0.6, flexShrink: 0 }}
+            >
+              Ajouter
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// Les surnoms courts affichés dans le sélecteur (plus familiers) ne correspondent
+// pas toujours au nom officiel attendu par la recherche TheSportsDB (ex. "OM"
+// remonte l'équipe nationale d'Oman plutôt qu'Olympique de Marseille) — cet alias
+// ne sert qu'à la requête de recherche, jamais à l'affichage.
+const TEAM_SEARCH_ALIASES = {
+  "OM": "Olympique de Marseille",
+  "OL": "Olympique Lyonnais",
+  "LOSC": "LOSC Lille",
+  "PSG Handball": "Paris Saint-Germain Handball",
+};
+
+// Interroge TheSportsDB (API gratuite) pour retrouver un club ou un sportif par
+// son nom, afin d'afficher de vraies données (prochain match, dernier résultat)
+// plutôt que d'inventer un contenu pour un nom choisi dans la liste ou tapé
+// manuellement. Si rien n'est trouvé, le widget l'indique honnêtement.
+async function resolveSportEntity({ individual, name }) {
+  try {
+    if (individual) {
+      const res = await fetch(`https://www.thesportsdb.com/api/v1/json/3/searchplayers.php?p=${encodeURIComponent(name)}`);
+      const json = await res.json();
+      const player = json.player?.[0];
+      if (!player) return null;
+      return { id: player.idPlayer, name: player.strPlayer, badge: player.strThumb || player.strCutout || null };
+    }
+    const searchName = TEAM_SEARCH_ALIASES[name] || name;
+    const res = await fetch(`https://www.thesportsdb.com/api/v1/json/3/searchteams.php?t=${encodeURIComponent(searchName)}`);
+    const json = await res.json();
+    const team = json.teams?.[0];
+    if (!team) return null;
+    // On garde le nom d'affichage choisi par l'utilisateur (le surnom familier),
+    // seul l'id/le badge viennent de la correspondance API.
+    return { id: team.idTeam, name, badge: team.strTeamBadge || null };
+  } catch {
+    return null;
+  }
+}
+
+// Widget "Sport" : suit un seul club ou sportif favori, choisi via un assistant
+// en popup (bouton ⚙️), affiche le prochain match et le dernier résultat quand
+// TheSportsDB (API gratuite) reconnaît le nom choisi.
+function SportWidget({ favoriteClub, updateFavoriteClub }) {
+  const [pickerOpen, setPickerOpen] = useState(!favoriteClub);
+  const [resolving, setResolving] = useState(false);
   const [nextEvent, setNextEvent] = useState(null);
   const [lastEvent, setLastEvent] = useState(null);
   const [loadingEvents, setLoadingEvents] = useState(false);
 
-  const searchTeams = async () => {
-    if (!query.trim()) return;
-    setSearching(true);
-    setSearchError("");
-    try {
-      const res = await fetch(`https://www.thesportsdb.com/api/v1/json/3/searchteams.php?t=${encodeURIComponent(query.trim())}`);
-      const json = await res.json();
-      setResults(json.teams || []);
-    } catch {
-      setSearchError("Recherche indisponible pour le moment.");
-    }
-    setSearching(false);
-  };
-
-  const chooseTeam = (team) => {
-    const club = { id: team.idTeam, name: team.strTeam, badge: team.strTeamBadge, league: team.strLeague };
-    updateFavoriteClub(club);
-    setConfiguring(false);
-    setResults(null);
-    setQuery("");
+  const handlePick = async (selection) => {
+    setResolving(true);
+    const resolved = await resolveSportEntity(selection);
+    updateFavoriteClub({
+      sport: selection.sport,
+      individual: selection.individual,
+      country: selection.country,
+      level: selection.level,
+      name: resolved?.name || selection.name,
+      id: resolved?.id || null,
+      badge: resolved?.badge || null,
+    });
+    setResolving(false);
+    setPickerOpen(false);
   };
 
   useEffect(() => {
-    if (!favoriteClub || configuring) return;
+    if (!favoriteClub?.id || favoriteClub.individual) {
+      setNextEvent(null);
+      setLastEvent(null);
+      return;
+    }
     setLoadingEvents(true);
     (async () => {
       try {
@@ -1734,88 +1871,63 @@ function SportWidget({ favoriteClub, updateFavoriteClub }) {
       }
       setLoadingEvents(false);
     })();
-  }, [favoriteClub?.id, configuring]);
-
-  if (configuring) {
-    return (
-      <Card>
-        <SectionLabel>Sport</SectionLabel>
-        <div style={{ fontSize: 12, color: "#8A8071", marginBottom: 10 }}>
-          Recherchez votre club favori (ex : "Real Madrid", "OM", "Lakers"…).
-        </div>
-        <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && searchTeams()}
-            placeholder="Nom du club…"
-            style={{ flex: 1, padding: "10px 12px", borderRadius: 10, border: "1px solid #E3DBCB", fontSize: 14 }}
-          />
-          <button onClick={searchTeams} disabled={searching} style={{ background: "var(--accent)", color: "#FBF8F3", border: "none", borderRadius: 10, padding: "0 16px", fontWeight: 600, fontSize: 13, cursor: "pointer" }}>
-            {searching ? "…" : "Chercher"}
-          </button>
-        </div>
-        {searchError && <div style={{ fontSize: 12, color: "#B0455A", marginBottom: 8 }}>{searchError}</div>}
-        {results && results.length === 0 && <div style={{ fontSize: 13, color: "#8A8071" }}>Aucun club trouvé.</div>}
-        {results && results.length > 0 && (
-          <div>
-            {results.slice(0, 6).map((team) => (
-              <button
-                key={team.idTeam}
-                onClick={() => chooseTeam(team)}
-                style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "8px 4px", background: "none", border: "none", borderBottom: "1px solid #EFE9DD", cursor: "pointer", textAlign: "left" }}
-              >
-                {team.strTeamBadge && <img src={team.strTeamBadge} alt="" style={{ width: 28, height: 28, objectFit: "contain" }} />}
-                <div>
-                  <div style={{ fontSize: 14, fontWeight: 600, color: "#262138" }}>{team.strTeam}</div>
-                  <div style={{ fontSize: 11, color: "#8A8071" }}>{team.strLeague}</div>
-                </div>
-              </button>
-            ))}
-          </div>
-        )}
-        {favoriteClub && (
-          <button onClick={() => setConfiguring(false)} style={{ ...ghostBtn, marginTop: 10 }}>Annuler</button>
-        )}
-      </Card>
-    );
-  }
+  }, [favoriteClub?.id, favoriteClub?.individual]);
 
   return (
     <Card>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
         <SectionLabel>Sport</SectionLabel>
-        <button onClick={() => setConfiguring(true)} style={{ background: "none", border: "none", color: "var(--accent)", fontSize: 12, fontWeight: 600, cursor: "pointer", padding: 0 }}>
-          Changer
+        <button onClick={() => setPickerOpen(true)} aria-label="Configurer le widget Sport" style={{ background: "none", border: "none", color: "var(--accent)", cursor: "pointer", padding: 4, display: "flex" }}>
+          <Settings size={16} />
         </button>
       </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-        {favoriteClub.badge && <img src={favoriteClub.badge} alt="" style={{ width: 34, height: 34, objectFit: "contain" }} />}
-        <div style={{ fontSize: 15, fontWeight: 600, color: "#262138" }}>{favoriteClub.name}</div>
-      </div>
-      {loadingEvents ? (
-        <div style={{ fontSize: 13, color: "#8A8071" }}>Chargement…</div>
+
+      {!favoriteClub ? (
+        <div style={{ fontSize: 13, color: "#8A8071" }}>Configurez ce widget pour suivre un club ou un sportif.</div>
       ) : (
         <>
-          {nextEvent ? (
-            <div style={{ fontSize: 13, color: "#5C5346", marginBottom: 8 }}>
-              <span style={{ color: "#8A8071" }}>Prochain match — </span>
-              {nextEvent.strHomeTeam} vs {nextEvent.strAwayTeam}
-              <div style={{ fontSize: 11, color: "#8A8071" }}>
-                {new Date(nextEvent.dateEvent).toLocaleDateString("fr-FR", { day: "numeric", month: "long" })}
-                {nextEvent.strTime && ` à ${nextEvent.strTime.slice(0, 5)}`}
-              </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+            {favoriteClub.badge && <img src={favoriteClub.badge} alt="" style={{ width: 34, height: 34, objectFit: "contain", borderRadius: favoriteClub.individual ? 17 : 0 }} />}
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 600, color: "#262138" }}>{favoriteClub.name}</div>
+              <div style={{ fontSize: 11, color: "#8A8071" }}>{favoriteClub.sport}{favoriteClub.level ? ` · ${favoriteClub.level}` : ""}</div>
             </div>
+          </div>
+          {!favoriteClub.id ? (
+            <div style={{ fontSize: 12, color: "#9C9384" }}>Données indisponibles pour ce nom sur notre source.</div>
+          ) : favoriteClub.individual ? (
+            <div style={{ fontSize: 12, color: "#9C9384" }}>Calendrier non disponible pour les sportifs individuels.</div>
+          ) : loadingEvents ? (
+            <div style={{ fontSize: 13, color: "#8A8071" }}>Chargement…</div>
           ) : (
-            <div style={{ fontSize: 12, color: "#9C9384", marginBottom: 8 }}>Aucun match à venir programmé.</div>
-          )}
-          {lastEvent && (
-            <div style={{ fontSize: 13, color: "#5C5346" }}>
-              <span style={{ color: "#8A8071" }}>Dernier résultat — </span>
-              {lastEvent.strHomeTeam} {lastEvent.intHomeScore} – {lastEvent.intAwayScore} {lastEvent.strAwayTeam}
-            </div>
+            <>
+              {nextEvent ? (
+                <div style={{ fontSize: 13, color: "#5C5346", marginBottom: 8 }}>
+                  <span style={{ color: "#8A8071" }}>Prochain match — </span>
+                  {nextEvent.strHomeTeam} vs {nextEvent.strAwayTeam}
+                  <div style={{ fontSize: 11, color: "#8A8071" }}>
+                    {new Date(nextEvent.dateEvent).toLocaleDateString("fr-FR", { day: "numeric", month: "long" })}
+                    {nextEvent.strTime && ` à ${nextEvent.strTime.slice(0, 5)}`}
+                  </div>
+                </div>
+              ) : (
+                <div style={{ fontSize: 12, color: "#9C9384", marginBottom: 8 }}>Aucun match à venir programmé.</div>
+              )}
+              {lastEvent && (
+                <div style={{ fontSize: 13, color: "#5C5346" }}>
+                  <span style={{ color: "#8A8071" }}>Dernier résultat — </span>
+                  {lastEvent.strHomeTeam} {lastEvent.intHomeScore} – {lastEvent.intAwayScore} {lastEvent.strAwayTeam}
+                </div>
+              )}
+            </>
           )}
         </>
+      )}
+
+      {pickerOpen && (
+        <Modal title="Configurer le widget Sport" onClose={() => favoriteClub && setPickerOpen(false)}>
+          {resolving ? <div style={{ fontSize: 13, color: "#8A8071" }}>Recherche en cours…</div> : <SportPicker onPick={handlePick} />}
+        </Modal>
       )}
     </Card>
   );
@@ -1874,9 +1986,58 @@ const SPORT_DATA = {
       France: { levels: { "Top 14": ["Stade Toulousain", "Racing 92", "Stade Rochelais", "UBB"] } },
     },
   },
-  Tennis: { players: ["Novak Djokovic", "Carlos Alcaraz", "Jannik Sinner", "Iga Świątek", "Aryna Sabalenka", "Coco Gauff"] },
+  Handball: {
+    countries: {
+      France: { levels: { "Starligue": ["PSG Handball", "Montpellier HB", "HBC Nantes", "Chambéry Savoie"] } },
+    },
+  },
+  Volleyball: {
+    countries: {
+      France: { levels: { "Ligue A": ["Paris Volley", "Tours VB", "AS Cannes", "Chaumont VB 52"] } },
+    },
+  },
+  Tennis: {
+    players: [
+      "Novak Djokovic", "Carlos Alcaraz", "Jannik Sinner", "Daniil Medvedev", "Alexander Zverev",
+      "Stefanos Tsitsipas", "Casper Ruud", "Andrey Rublev", "Holger Rune", "Taylor Fritz",
+      "Iga Świątek", "Aryna Sabalenka", "Coco Gauff", "Elena Rybakina", "Jessica Pegula",
+      "Ons Jabeur", "Maria Sakkari", "Qinwen Zheng", "Jasmine Paolini", "Barbora Krejčíková",
+    ],
+  },
+  Golf: {
+    players: [
+      "Scottie Scheffler", "Rory McIlroy", "Jon Rahm", "Viktor Hovland", "Xander Schauffele",
+      "Patrick Cantlay", "Collin Morikawa", "Brooks Koepka", "Justin Thomas", "Jordan Spieth",
+      "Tiger Woods", "Dustin Johnson", "Bryson DeChambeau", "Tommy Fleetwood", "Matt Fitzpatrick",
+    ],
+  },
+  Athlétisme: {
+    players: [
+      "Mondo Duplantis", "Noah Lyles", "Kishane Thompson", "Léon Marchand", "Kevin Mayer",
+      "Sifan Hassan", "Shericka Jackson", "Sha'Carri Richardson", "Femke Bol", "Faith Kipyegon",
+      "Karsten Warholm", "Ryan Crouser", "Marcell Jacobs", "Grant Holloway", "Jakob Ingebrigtsen",
+    ],
+  },
+  Natation: {
+    players: [
+      "Léon Marchand", "Caeleb Dressel", "Adam Peaty", "David Popovici", "Kristóf Milák",
+      "Katie Ledecky", "Summer McIntosh", "Ariarne Titmus", "Sarah Sjöström", "Kaylee McKeown",
+    ],
+  },
+  Cyclisme: {
+    players: [
+      "Tadej Pogačar", "Jonas Vingegaard", "Remco Evenepoel", "Mathieu van der Poel", "Wout van Aert",
+      "Primož Roglič", "Julian Alaphilippe", "Mark Cavendish", "Annemiek van Vleuten", "Demi Vollering",
+    ],
+  },
+  Boxe: {
+    players: [
+      "Tyson Fury", "Oleksandr Usyk", "Canelo Álvarez", "Terence Crawford", "Naoya Inoue",
+      "Errol Spence Jr", "Gervonta Davis", "Dmitry Bivol", "Artur Beterbiev", "Katie Taylor",
+    ],
+  },
 };
-const SPORT_TYPES = ["Football", "Basketball", "Rugby", "Tennis"];
+const SPORT_TYPES = Object.keys(SPORT_DATA);
 const SPORT_CONTENT_TYPES = [
   { id: "calendrier", label: "Calendrier" },
   { id: "classement", label: "Classement" },
@@ -1896,15 +2057,15 @@ function SportAvanceWidget({ config, updateConfig }) {
   const [selections, setSelections] = useState(config?.selections || []);
   const [contents, setContents] = useState(config?.contents || { calendrier: true, classement: true, actualite: false, forme: false });
 
-  const isTennis = sport === "Tennis";
-  const countries = sport && !isTennis ? Object.keys(SPORT_DATA[sport].countries) : [];
-  const levels = sport && country && !isTennis ? Object.keys(SPORT_DATA[sport].countries[country].levels) : [];
-  const pool = isTennis ? SPORT_DATA.Tennis.players : sport && country && level ? SPORT_DATA[sport].countries[country].levels[level] : [];
+  const isIndividual = sport && !!SPORT_DATA[sport]?.players;
+  const countries = sport && !isIndividual ? Object.keys(SPORT_DATA[sport].countries) : [];
+  const levels = sport && country && !isIndividual ? Object.keys(SPORT_DATA[sport].countries[country].levels) : [];
+  const pool = isIndividual ? SPORT_DATA[sport].players : sport && country && level ? SPORT_DATA[sport].countries[country].levels[level] : [];
 
   const toggleSelection = (name) => setSelections((prev) => (prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name]));
   const toggleContent = (id) => setContents((prev) => ({ ...prev, [id]: !prev[id] }));
   const save = () => {
-    updateConfig({ sport, country: isTennis ? null : country, level: isTennis ? null : level, selections, contents });
+    updateConfig({ sport, country: isIndividual ? null : country, level: isIndividual ? null : level, selections, contents });
     setEditing(false);
   };
 
@@ -1944,7 +2105,7 @@ function SportAvanceWidget({ config, updateConfig }) {
         ))}
       </div>
 
-      {sport && !isTennis && (
+      {sport && !isIndividual && (
         <>
           <div style={{ fontSize: 12, color: "#8A8071", marginBottom: 6 }}>2. Pays</div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
@@ -1955,7 +2116,7 @@ function SportAvanceWidget({ config, updateConfig }) {
         </>
       )}
 
-      {sport && country && !isTennis && (
+      {sport && country && !isIndividual && (
         <>
           <div style={{ fontSize: 12, color: "#8A8071", marginBottom: 6 }}>3. Niveau</div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
@@ -1966,9 +2127,9 @@ function SportAvanceWidget({ config, updateConfig }) {
         </>
       )}
 
-      {pool.length > 0 && (isTennis || level) && (
+      {pool.length > 0 && (isIndividual || level) && (
         <>
-          <div style={{ fontSize: 12, color: "#8A8071", marginBottom: 6 }}>{isTennis ? "2. Joueurs (plusieurs possibles)" : "4. Clubs (plusieurs possibles)"}</div>
+          <div style={{ fontSize: 12, color: "#8A8071", marginBottom: 6 }}>{isIndividual ? "2. Sportifs (plusieurs possibles)" : "4. Clubs (plusieurs possibles)"}</div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
             {pool.map((name) => (
               <button key={name} onClick={() => toggleSelection(name)} style={pillBtn(selections.includes(name))}>{selections.includes(name) ? "✓ " : ""}{name}</button>
@@ -1979,7 +2140,7 @@ function SportAvanceWidget({ config, updateConfig }) {
 
       {selections.length > 0 && (
         <>
-          <div style={{ fontSize: 12, color: "#8A8071", marginBottom: 6 }}>{isTennis ? "3." : "5."} Contenus à afficher (cumulables)</div>
+          <div style={{ fontSize: 12, color: "#8A8071", marginBottom: 6 }}>{isIndividual ? "3." : "5."} Contenus à afficher (cumulables)</div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 14 }}>
             {SPORT_CONTENT_TYPES.map((c) => (
               <button key={c.id} onClick={() => toggleContent(c.id)} style={pillBtn(contents[c.id])}>{contents[c.id] ? "✓ " : ""}{c.label}</button>
