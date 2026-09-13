@@ -1,14 +1,16 @@
 // Fonction serverless Vercel — reçoit une photo (frigo, aliments), l'envoie à
-// l'API Claude (Anthropic) pour qu'elle identifie les ingrédients visibles et
+// l'API Gemini (Google) pour qu'elle identifie les ingrédients visibles et
 // propose 3 recettes réalisables à partir de ceux-ci, à des niveaux de
 // préparation croissants (rapide, moyen, élaboré).
 //
 // Appel : POST /api/recipes  { "image": "data:image/jpeg;base64,...." }
 //
-// ⚠️ Nécessite la variable d'environnement ANTHROPIC_API_KEY sur Vercel
-// (Project Settings → Environment Variables). Sans elle, la fonction répond
-// clairement par une erreur plutôt que d'inventer des recettes.
+// ⚠️ Nécessite la variable d'environnement GEMINI_API_KEY sur Vercel
+// (Project Settings → Environment Variables, clé prise sur aistudio.google.com).
+// Sans elle, la fonction répond clairement par une erreur plutôt que d'inventer
+// des recettes.
 const MAX_BASE64_LENGTH = 6_000_000; // ~4.5 Mo d'image, marge sous la limite de payload Vercel
+const GEMINI_MODEL = "gemini-3.8-flash";
 
 // L'analyse d'image + génération de recettes peut dépasser les 10s par défaut.
 export const config = { maxDuration: 30 };
@@ -19,9 +21,9 @@ export default async function handler(req, res) {
     return;
   }
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
-    res.status(500).json({ error: "Analyse non configurée sur le serveur (ANTHROPIC_API_KEY manquante)." });
+    res.status(500).json({ error: "Analyse non configurée sur le serveur (GEMINI_API_KEY manquante)." });
     return;
   }
 
@@ -46,7 +48,7 @@ alimentaires visibles, puis propose exactement 3 recettes réalisables avec ces 
 (en complétant si besoin avec des produits de base courants : sel, poivre, huile, eau, farine) :
 une "rapide" (15 minutes maximum, peu d'étapes), une "moyen" (30 à 40 minutes), une "elabore"
 (plus technique ou plus longue, présentation soignée). Réponds UNIQUEMENT avec un objet JSON
-valide, sans texte autour, exactement dans cette forme :
+valide, sans texte autour, sans balises markdown, exactement dans cette forme :
 {"ingredients": ["..."], "recipes": [
   {"niveau": "rapide", "titre": "...", "duree": "...", "ingredients": ["..."], "etapes": ["...", "..."]},
   {"niveau": "moyen", "titre": "...", "duree": "...", "ingredients": ["..."], "etapes": ["...", "..."]},
@@ -54,40 +56,37 @@ valide, sans texte autour, exactement dans cette forme :
 ]}`;
 
   try {
-    const anthropicRes = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-5",
-        max_tokens: 2000,
-        messages: [
-          {
-            role: "user",
-            content: [
-              { type: "image", source: { type: "base64", media_type: mediaType, data: base64Data } },
-              { type: "text", text: prompt },
-            ],
-          },
-        ],
-      }),
-    });
+    const geminiRes = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(apiKey)}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [
+            {
+              parts: [
+                { inline_data: { mime_type: mediaType, data: base64Data } },
+                { text: prompt },
+              ],
+            },
+          ],
+          generationConfig: { responseMimeType: "application/json" },
+        }),
+      }
+    );
 
-    if (!anthropicRes.ok) {
-      const errText = await anthropicRes.text();
-      console.error("Erreur API Anthropic :", anthropicRes.status, errText);
+    if (!geminiRes.ok) {
+      const errText = await geminiRes.text();
+      console.error("Erreur API Gemini :", geminiRes.status, errText);
       res.status(502).json({ error: "Analyse indisponible pour le moment." });
       return;
     }
 
-    const data = await anthropicRes.json();
-    const text = data.content?.[0]?.text || "";
+    const data = await geminiRes.json();
+    const text = data.candidates?.[0]?.content?.parts?.map((p) => p.text || "").join("") || "";
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
-      console.error("Réponse inattendue de Claude :", text);
+      console.error("Réponse inattendue de Gemini :", JSON.stringify(data).slice(0, 500));
       res.status(502).json({ error: "Réponse inattendue de l'analyse." });
       return;
     }
